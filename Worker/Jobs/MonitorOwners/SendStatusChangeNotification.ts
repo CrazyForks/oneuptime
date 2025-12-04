@@ -25,6 +25,7 @@ import User from "Common/Models/DatabaseModels/User";
 import { WhatsAppMessagePayload } from "Common/Types/WhatsApp/WhatsAppMessage";
 import SortOrder from "Common/Types/BaseDatabase/SortOrder";
 import QueryHelper from "Common/Server/Types/Database/QueryHelper";
+import logger from "Common/Server/Utils/Logger";
 
 RunCron(
   "MonitorOwner:SendStatusChangeEmail",
@@ -99,6 +100,7 @@ RunCron(
             select: {
               monitorStatusId: true,
               startsAt: true,
+              createdAt: true,
             },
           });
 
@@ -114,17 +116,31 @@ RunCron(
             },
           });
 
-          // Calculate how long the monitor was in the previous status
-          if (previousTimeline.startsAt && monitorStatusTimeline.startsAt) {
-            const durationInMinutes: number =
-              OneUptimeDate.getDifferenceInMinutes(
-                monitorStatusTimeline.startsAt,
-                previousTimeline.startsAt,
+          /*
+           * Calculate how long the monitor was in the previous status
+           * Use startsAt if available, otherwise fall back to createdAt
+           */
+          const previousStartTime: Date | undefined =
+            previousTimeline.startsAt || previousTimeline.createdAt;
+          const currentStartTime: Date | undefined =
+            monitorStatusTimeline.startsAt || monitorStatusTimeline.createdAt;
+
+          if (previousStartTime && currentStartTime) {
+            logger.debug(
+              `Calculating duration between ${previousStartTime.toISOString()} and ${currentStartTime.toISOString()}`,
+            );
+
+            const durationInSeconds: number =
+              OneUptimeDate.getDifferenceInSeconds(
+                currentStartTime,
+                previousStartTime,
               );
             previousStatusDuration =
-              OneUptimeDate.convertMinutesToDaysHoursAndMinutes(
-                durationInMinutes,
+              OneUptimeDate.convertSecondsToDaysHoursMinutesAndSeconds(
+                durationInSeconds,
               );
+
+            logger.debug(`Previous status duration: ${previousStatusDuration}`);
           }
         }
       }
@@ -153,14 +169,18 @@ RunCron(
       }
 
       for (const user of owners) {
+        // Build the "Was X for Y" string
+        const previousStatusDurationText: string =
+          previousStatus?.name && previousStatusDuration
+            ? `Was ${previousStatus.name} for ${previousStatusDuration}`
+            : "";
+
         const vars: Dictionary<string> = {
           monitorName: monitor.name!,
           projectName: monitorStatusTimeline.project!.name!,
           currentStatus: monitorStatus!.name!,
           currentStatusColor: monitorStatus!.color?.toString() || "#000000",
-          previousStatus: previousStatus?.name || "",
-          previousStatusColor: previousStatus?.color?.toString() || "#6b7280",
-          previousStatusDuration: previousStatusDuration,
+          previousStatusDurationText: previousStatusDurationText,
           monitorDescription: await Markdown.convertToHTML(
             monitor.description! || "",
             MarkdownContentType.Email,
