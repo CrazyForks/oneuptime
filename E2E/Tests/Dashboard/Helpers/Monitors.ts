@@ -32,6 +32,13 @@ export interface MonitorTypeRecipe {
   // true for probeable types that show the extra interval step.
   hasInterval: boolean;
   /*
+   * Which interval to pick on that step. Defaults to the catalog spec's
+   * "Every 5 Minutes"; a spec that has to WAIT for a probe to re-evaluate the
+   * monitor should ask for "Every Minute" instead, so its deadline is several
+   * checks wide rather than exactly one.
+   */
+  intervalLabel?: string | undefined;
+  /*
    * true for monitor types that skip criteria and interval. The always-visible
    * Labels step still follows Monitor Info.
    */
@@ -203,14 +210,21 @@ const clickCreateUntilMonitorView: (data: {
  */
 const selectMonitoringInterval: (data: {
   page: Page;
-}) => Promise<void> = async (data: { page: Page }): Promise<void> => {
+  intervalLabel?: string | undefined;
+}) => Promise<void> = async (data: {
+  page: Page;
+  intervalLabel?: string | undefined;
+}): Promise<void> => {
   const combo: Locator = data.page.getByRole("combobox", {
     name: "Monitoring Interval",
   });
   await combo.waitFor({ state: "visible", timeout: 30000 });
   await combo.click();
   await data.page
-    .getByRole("option", { name: "Every 5 Minutes", exact: true })
+    .getByRole("option", {
+      name: data.intervalLabel || "Every 5 Minutes",
+      exact: true,
+    })
     .click();
 };
 
@@ -331,7 +345,10 @@ export const createMonitor: CreateMonitorFunction = async (data: {
 
     if (data.recipe.hasInterval) {
       // Choose an interval, then advance to the always-final Labels step.
-      await selectMonitoringInterval({ page });
+      await selectMonitoringInterval({
+        page,
+        intervalLabel: data.recipe.intervalLabel,
+      });
       await page.getByTestId(submitButtonTestId).click();
     }
   }

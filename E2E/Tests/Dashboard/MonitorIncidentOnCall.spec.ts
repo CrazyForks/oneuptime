@@ -404,6 +404,20 @@ test.describe("Monitor -> Incident -> On-Call -> User Alerted", () => {
       label: "Website",
       cardValue: "Website",
       hasInterval: true,
+      /*
+       * Every minute, matching the API monitor below.
+       *
+       * This spec waits for a probe to re-evaluate the monitor twice - once
+       * for the outage and once for the recovery - against a 5 minute
+       * deadline. On the catalog default of "Every 5 Minutes" that deadline is
+       * exactly ONE check wide: a check that lands a second late, or a probe
+       * busy with the rest of the suite, is the difference between green and
+       * "timed out waiting for the monitor to recover to operational" - which
+       * is how this test failed on master while the API monitor beside it,
+       * created with "* * * * *", passed. A one-minute cadence makes the same
+       * deadline four checks wide.
+       */
+      intervalLabel: "Every Minute",
       fillCriteria: async ({ page }: { page: Page }): Promise<void> => {
         await fillDestination({ page, value: HEALTHY_URL });
       },

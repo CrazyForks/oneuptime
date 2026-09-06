@@ -769,8 +769,21 @@ test.describe("Session Replay", () => {
      * the wall clock, not the session's start; the player converts with the
      * header's start. With an explicit moment the ?signal= row is only
      * selected (no pre-roll seek), on its home tab.
+     *
+     * The moment lands four seconds BEFORE the error, inside the same chunk.
+     *
+     * Same chunk, because a recording row exists only once its chunk is
+     * decoded: a moment in chunk 3 paired with a rec: row from chunk 1 asks
+     * the rail for a row out of footage the player was never told to load,
+     * which is not something any link builder produces - every one of them
+     * names an instant and the row that lives at it.
+     *
+     * BEFORE, because that is what keeps the assertion sharp. The pre-roll
+     * seek a bare ?signal= would do lands one second AFTER this, at 0:19, and
+     * the clock only ever moves forward - so a clock reading 0:16-0:18 can
+     * have come from ?at= and from nothing else.
      */
-    const atUnixMs: number = sessionStartUnixMs + 50000;
+    const atUnixMs: number = sessionStartUnixMs + ERROR_OFFSET_MS - 4000;
 
     await openSessionReplayPlayer({
       page,
@@ -780,8 +793,9 @@ test.describe("Session Replay", () => {
       query: `at=${atUnixMs}&rail=errors&signal=${encodeURIComponent(errorSignalId)}`,
     });
 
+    /* 0:16 - and never 0:19, which is where the pre-roll would have landed. */
     await expect(clock, "?at= must land on the moment").toHaveText(
-      /^0:5[0-7]/,
+      /^0:1[6-8]/,
       { timeout: 60000 },
     );
     await expect(page.getByTestId("rail-tab-errors")).toHaveAttribute(

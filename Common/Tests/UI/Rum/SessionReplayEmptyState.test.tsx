@@ -65,6 +65,21 @@ function iso(ageMs: number): string {
   return new Date(NOW - ageMs).toISOString();
 }
 
+/*
+ * The same shape against the REAL clock.
+ *
+ * Snapshots this file builds itself are diagnosed at the frozen NOW, so a
+ * fixed date is right for them. The connected tests are not: they go through
+ * the hook, which diagnoses whatever /ingest-status answers against
+ * Date.now(). An age built from the frozen NOW therefore grows by a day for
+ * every day that passes, and a fixture meant to read "last chunk 12s ago"
+ * eventually reads "no chunk for 15h" - green on the morning it was written,
+ * amber by that evening, and a failing job on master ever after.
+ */
+function isoFromRealNow(offsetMs: number): string {
+  return new Date(Date.now() - offsetMs).toISOString();
+}
+
 function makeStatus(
   overrides?: Partial<RecordingHealthStatus>,
 ): RecordingHealthStatus {
@@ -96,6 +111,10 @@ function makeStatus(
   };
 }
 
+/*
+ * The wire shape, as /ingest-status answers it. Read by the hook, which
+ * diagnoses against the real clock - so its ages come from it too.
+ */
 function wireStatus(overrides?: JSONObject): JSONObject {
   return {
     isProjectAllowed: true,
@@ -104,7 +123,7 @@ function wireStatus(overrides?: JSONObject): JSONObject {
     allowedOrigins: ["https://app.acme.com"],
     samplePercentage: 100,
     captureTrigger: "Always",
-    lastChunkReceivedAt: iso(12 * 1000),
+    lastChunkReceivedAt: isoFromRealNow(12 * 1000),
     budgetExceededAt: null,
     projectBytesUsedToday: 1024,
     dailyByteLimit: 1024 * 1024,
@@ -114,8 +133,8 @@ function wireStatus(overrides?: JSONObject): JSONObject {
     maskingMode: "MaskSensitiveInputsOnly",
     retentionInDays: 7,
     publishedRecorderVersion: "1.4.0",
-    lastConfigFetchAt: iso(12 * 1000),
-    lastSessionStartedAt: iso(60 * 1000),
+    lastConfigFetchAt: isoFromRealNow(12 * 1000),
+    lastSessionStartedAt: isoFromRealNow(60 * 1000),
     sessionsLast24h: 143,
     playableSessionsLast24h: 120,
     refusalsLast24h: [],
