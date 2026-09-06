@@ -201,15 +201,6 @@ const SERIES_FINGERPRINT: string = "fp-pod-checkout-cpu";
  */
 const DEFAULT_SEVERITY_COLOR: string = "#64748b";
 
-/*
- * DatabaseConfig is REAL in this suite - getDashboardUrl reads only HOST and
- * HTTP_PROTOCOL from the environment - so the worker builds a genuine link
- * and this is what it comes out as. The SHAPE of it is pinned separately, in
- * "the unsubscribe link points at the project's notification settings".
- */
-const EXPECTED_SETTINGS_LINK: string =
-  "http://localhost/dashboard/project-1/user-settings/notification-settings";
-
 const DESCRIPTION_MARKDOWN: string = "**Latency** is above the SLO";
 const REMEDIATION_MARKDOWN: string = "Restart the *ingest* pods";
 const ROOT_CAUSE_MARKDOWN: string = "A **bad deploy** saturated the queue";
@@ -415,7 +406,6 @@ describe("AlertOwner:SendCreatedResourceEmail worker", () => {
       severityBadgeText: "Warning",
       severityColor: DEFAULT_SEVERITY_COLOR,
       preheader: "A bad deploy saturated the queue \u00b7 API Monitor",
-      notificationSettingsLink: EXPECTED_SETTINGS_LINK,
       isOwner: "true",
     };
 
@@ -921,23 +911,6 @@ describe("AlertOwner:SendCreatedResourceEmail worker", () => {
       await runWorkerTick();
 
       expect(sentVars()[0]!["preheader"]).toContain("19 firings in 2h");
-    });
-
-    /*
-     * The unsubscribe copy described a four-level menu path and rendered no
-     * URL at all. This is the page it was describing.
-     */
-    test("the unsubscribe link points at the project's notification settings", async () => {
-      alertService.findAllBy.mockResolvedValue([makeAlert({})] as never);
-      alertService.findOwners.mockResolvedValue([makeOwner("a")]);
-
-      await runWorkerTick();
-
-      const link: string = sentVars()[0]!["notificationSettingsLink"]!;
-
-      expect(link).toContain("/user-settings/notification-settings");
-      expect(link).toContain(PROJECT_ID.toString());
-      expect(link.startsWith("http")).toBe(true);
     });
 
     /*

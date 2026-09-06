@@ -9,10 +9,7 @@ import ObjectID from "Common/Types/ObjectID";
 import { SMSMessage } from "Common/Types/SMS/SMS";
 import PushNotificationMessage from "Common/Types/PushNotification/PushNotificationMessage";
 import Text from "Common/Types/Text";
-import URL from "Common/Types/API/URL";
 import SeriesLabelDisplay from "Common/Types/Monitor/SeriesContext/SeriesLabelDisplay";
-import DatabaseConfig from "Common/Server/DatabaseConfig";
-import logger from "Common/Server/Utils/Logger";
 import { EVERY_MINUTE } from "Common/Utils/CronTime";
 import AlertService from "Common/Server/Services/AlertService";
 import AlertStateTimelineService from "Common/Server/Services/AlertStateTimelineService";
@@ -271,21 +268,6 @@ RunCron(
         .join(" · ")
         .slice(0, 160);
 
-      // One hop to the notification settings page, instead of a menu path.
-      let notificationSettingsLink: string = "";
-
-      try {
-        notificationSettingsLink = URL.fromString(
-          (await DatabaseConfig.getDashboardUrl()).toString(),
-        )
-          .addRoute(
-            `/${alertStateTimeline.projectId!.toString()}/user-settings/notification-settings`,
-          )
-          .toString();
-      } catch (e) {
-        logger.error(e);
-      }
-
       for (const user of owners) {
         const alertIdentifier: string =
           alert.alertNumber !== undefined
@@ -305,7 +287,6 @@ RunCron(
           resourcesAffected: resourcesAffected,
           stateChangeRootCause: stateChangeRootCauseHtml,
           preheader: preheader,
-          notificationSettingsLink: notificationSettingsLink,
           stateChangedAt:
             OneUptimeDate.getDateAsFormattedHTMLInMultipleTimezones({
               date: alertStateTimeline.createdAt!,

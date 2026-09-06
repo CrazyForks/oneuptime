@@ -7,8 +7,10 @@ import {
 } from "../../../Types/Monitor/DockerSwarmAlertTemplates";
 import { getDockerSwarmMetricByMetricName } from "../../../Types/Monitor/DockerSwarmMetricCatalog";
 import { getRecoveryThreshold } from "../../../Types/Monitor/Recommendation/RecommendationCriteriaBuilder";
-import { getComplementFilterType } from "./Utils/RecommendationCriteriaAssertions";
-import { hasRecoveryDeadBand } from "./Utils/RecommendationCriteriaAssertions";
+import {
+  getComplementFilterType,
+  hasRecoveryDeadBand,
+} from "./Utils/RecommendationCriteriaAssertions";
 import MonitorStep from "../../../Types/Monitor/MonitorStep";
 import MonitorStepDockerSwarmMonitor from "../../../Types/Monitor/MonitorStepDockerSwarmMonitor";
 import MonitorCriteriaInstance from "../../../Types/Monitor/MonitorCriteriaInstance";

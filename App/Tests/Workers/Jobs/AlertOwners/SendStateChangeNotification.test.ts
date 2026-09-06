@@ -591,8 +591,6 @@ describe("AlertOwner:SendStateChangeEmail worker", () => {
         stateChangeRootCause: "",
         preheader:
           "Acknowledged \u00b7 web-server-1 \u00b7 Was Identified for 2 hours",
-        notificationSettingsLink:
-          "http://localhost/dashboard/project-1/user-settings/notification-settings",
         stateChangedAt: `formatted:${STATE_CHANGED_AT.toISOString()}:${timezones}`,
         alertSeverity: "Critical",
         alertViewLink: ALERT_LINK,

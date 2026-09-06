@@ -16,8 +16,6 @@ import PushNotificationUtil from "Common/Server/Utils/PushNotificationUtil";
 import Select from "Common/Server/Types/Database/Select";
 import QueryHelper from "Common/Server/Types/Database/QueryHelper";
 import PositiveNumber from "Common/Types/PositiveNumber";
-import DatabaseConfig from "Common/Server/DatabaseConfig";
-import URL from "Common/Types/API/URL";
 import Markdown, { MarkdownContentType } from "Common/Server/Types/Markdown";
 import logger from "Common/Server/Utils/Logger";
 import Alert from "Common/Models/DatabaseModels/Alert";
@@ -332,26 +330,6 @@ RunCron(
         .join(" · ")
         .slice(0, 160);
 
-      /*
-       * One hop to the page the unsubscribe copy has always described in
-       * prose. Behind auth, like every other dashboard deep link the product
-       * mails, so it is not RFC 8058 one-click - but it beats a four-level
-       * menu path the reader has to remember.
-       */
-      let notificationSettingsLink: string = "";
-
-      try {
-        notificationSettingsLink = URL.fromString(
-          (await DatabaseConfig.getDashboardUrl()).toString(),
-        )
-          .addRoute(
-            `/${projectId.toString()}/user-settings/notification-settings`,
-          )
-          .toString();
-      } catch (e) {
-        logger.error(e);
-      }
-
       for (const user of owners) {
         try {
           const alertIdentifier: string =
@@ -387,7 +365,6 @@ RunCron(
             severityBadgeText: alert.alertSeverity!.name!,
             severityColor: severityColor,
             preheader: preheader,
-            notificationSettingsLink: notificationSettingsLink,
           };
 
           if (doesResourceHasOwners === true) {

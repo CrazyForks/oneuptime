@@ -1,7 +1,14 @@
-import Handlebars from "handlebars";
+import Handlebars, { TemplateDelegate } from "handlebars";
 import fs from "fs";
 import Path from "path";
 import { beforeAll, describe, expect, test } from "@jest/globals";
+
+/*
+ * "=3D" is quoted-printable for "=". Built with the RegExp constructor rather
+ * than a literal: a literal opening with "=" reads as the /= operator, to a
+ * human and to no-div-regex alike.
+ */
+const QUOTED_PRINTABLE_EQUALS: RegExp = new RegExp("=3D", "u");
 
 /*
  * Registers the product's real `ifCond` / `ifNotCond` / `concat` helpers on
@@ -97,7 +104,7 @@ describe("the concat helper", () => {
   });
 
   test("joins more than two arguments", () => {
-    const template: HandlebarsTemplateDelegate = Handlebars.compile(
+    const template: TemplateDelegate = Handlebars.compile(
       '{{concat "Alert " alertNumber ": " alertTitle}}',
     );
 
@@ -614,43 +621,13 @@ describe("Logo.hbs", () => {
  * either/or is the contract: the templates whose workers do not yet build the
  * URL keep today's sentence, so this could land one producer at a time.
  */
-describe("UnsubscribeOwnerEmail.hbs", () => {
-  function renderPartial(vars: Record<string, unknown>): string {
-    return Handlebars.compile(
-      fs.readFileSync(
-        Path.resolve(TEMPLATES_DIR, "Partials", "UnsubscribeOwnerEmail.hbs"),
-        { encoding: "utf8" },
-      ),
-    )(vars);
-  }
-
-  const LINK: string =
-    "https://oneuptime.test/dashboard/project-1/user-settings/notification-settings";
-
-  test("with a link it renders the URL and drops the menu path", () => {
-    const html: string = renderPartial({ notificationSettingsLink: LINK });
-
-    expect(html).toContain(LINK);
-    expect(html).not.toContain("Dashboard > More > User Settings");
-  });
-
-  test("without a link it keeps the sentence every other template relies on", () => {
-    const html: string = renderPartial({});
-
-    expect(html).toContain("Dashboard > More > User Settings");
-    expect(html).not.toContain("notification-settings");
-  });
-
-  test("the alert emails carry the link end to end", () => {
-    const html: string = render("AlertOwnerResourceCreated.hbs", {
-      ...VARS,
-      notificationSettingsLink: LINK,
-    });
-
-    expect(html).toContain(LINK);
-  });
-});
-
+/*
+ * UnsubscribeOwnerEmail.hbs is covered by
+ * Tests/Notification/OwnerNotificationPreferencesTemplate.test.ts, which
+ * owns the `notificationPreferencesUrl` contract. The link is injected
+ * centrally by UserNotificationSettingService for every owner email, so
+ * there is no per-worker producer to pin here.
+ */
 describe("Header.hbs", () => {
   const source: string = fs.readFileSync(
     Path.resolve(TEMPLATES_DIR, "Partials", "Header.hbs"),
@@ -688,7 +665,11 @@ describe("Header.hbs", () => {
          * source means content was pasted out of a raw email body without
          * being decoded, and it silently corrupts the attribute it lands in.
          */
-        if (/=3D/u.test(fs.readFileSync(full, { encoding: "utf8" }))) {
+        if (
+          QUOTED_PRINTABLE_EQUALS.test(
+            fs.readFileSync(full, { encoding: "utf8" }),
+          )
+        ) {
           offenders.push(Path.relative(TEMPLATES_DIR, full));
         }
       }

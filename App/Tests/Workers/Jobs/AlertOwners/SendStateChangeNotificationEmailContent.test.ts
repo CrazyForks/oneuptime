@@ -432,17 +432,5 @@ describe("AlertOwner:SendStateChangeEmail email content", () => {
       expect(preheader).not.toContain("Alert state has changed");
       expect(preheader.length).toBeLessThanOrEqual(160);
     });
-
-    test("the unsubscribe link points at the project's notification settings", async () => {
-      timelineService.findAllBy.mockResolvedValue([makeTimeline({})]);
-      alertService.findOneById.mockResolvedValue(makeAlert({}));
-
-      await runWorkerTick();
-
-      const link: string = firstVars()["notificationSettingsLink"]!;
-
-      expect(link).toContain("/user-settings/notification-settings");
-      expect(link).toContain(PROJECT_ID.toString());
-    });
   });
 });
