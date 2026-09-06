@@ -129,8 +129,10 @@ describe("CompareCriteria aggregation semantics", () => {
     });
 
     test("Average > 80 was WRONG before this fix: AllValues semantics said false", () => {
-      // If Average were still falling through to `.every()`, 79.95 would
-      // sink it. It does not, because the mean is what is compared.
+      /*
+       * If Average were still falling through to `.every()`, 79.95 would
+       * sink it. It does not, because the mean is what is compared.
+       */
       expect(
         WINDOW.every((v: number) => {
           return v > 80;
@@ -287,8 +289,10 @@ describe("CompareCriteria aggregation semantics", () => {
       expect(message).not.toContain("79.95");
       expect(message).not.toContain("87.73");
 
-      // The one that did breach is named, and the reader is told how much
-      // of the window it represents.
+      /*
+       * The one that did breach is named, and the reader is told how much
+       * of the window it represents.
+       */
       expect(message).toContain("91.53");
       expect(message).toContain(
         "1 of 5 samples in the evaluation window breached this threshold.",
@@ -384,8 +388,10 @@ describe("CompareCriteria aggregation semantics", () => {
     );
 
     test("a message rendered for a filter that did not match degrades gracefully", () => {
-      // Nothing in the window is above 200; the whole window is quoted
-      // rather than an empty list.
+      /*
+       * Nothing in the window is above 200; the whole window is quoted
+       * rather than an empty list.
+       */
       const message: string = CompareCriteria.getCompareMessage({
         values: WINDOW,
         threshold: 200,

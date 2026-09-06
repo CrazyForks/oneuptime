@@ -1,7 +1,13 @@
-import Handlebars from "handlebars";
+import Handlebars, { TemplateDelegate } from "handlebars";
 import fs from "fs";
 import Path from "path";
 import { beforeAll, describe, expect, test } from "@jest/globals";
+
+/*
+ * "=3D" is quoted-printable for "=". Hoisted to a constant because a regex
+ * literal opening with "=" reads as the /= operator at a glance.
+ */
+const QUOTED_PRINTABLE_EQUALS: RegExp = /=3D/u;
 
 /*
  * Registers the product's real `ifCond` / `ifNotCond` / `concat` helpers on
@@ -97,7 +103,7 @@ describe("the concat helper", () => {
   });
 
   test("joins more than two arguments", () => {
-    const template: HandlebarsTemplateDelegate = Handlebars.compile(
+    const template: TemplateDelegate = Handlebars.compile(
       '{{concat "Alert " alertNumber ": " alertTitle}}',
     );
 
@@ -238,7 +244,7 @@ describe("Header.hbs", () => {
          * source means content was pasted out of a raw email body without
          * being decoded, and it silently corrupts the attribute it lands in.
          */
-        if (/=3D/u.test(fs.readFileSync(full, { encoding: "utf8" }))) {
+        if (QUOTED_PRINTABLE_EQUALS.test(fs.readFileSync(full, { encoding: "utf8" }))) {
           offenders.push(Path.relative(TEMPLATES_DIR, full));
         }
       }
