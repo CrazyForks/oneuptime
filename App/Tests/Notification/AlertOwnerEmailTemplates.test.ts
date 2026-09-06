@@ -4,10 +4,11 @@ import Path from "path";
 import { beforeAll, describe, expect, test } from "@jest/globals";
 
 /*
- * "=3D" is quoted-printable for "=". Hoisted to a constant because a regex
- * literal opening with "=" reads as the /= operator at a glance.
+ * "=3D" is quoted-printable for "=". Built with the RegExp constructor rather
+ * than a literal: a literal opening with "=" reads as the /= operator, to a
+ * human and to no-div-regex alike.
  */
-const QUOTED_PRINTABLE_EQUALS: RegExp = /=3D/u;
+const QUOTED_PRINTABLE_EQUALS: RegExp = new RegExp("=3D", "u");
 
 /*
  * Registers the product's real `ifCond` / `ifNotCond` / `concat` helpers on
@@ -244,7 +245,11 @@ describe("Header.hbs", () => {
          * source means content was pasted out of a raw email body without
          * being decoded, and it silently corrupts the attribute it lands in.
          */
-        if (QUOTED_PRINTABLE_EQUALS.test(fs.readFileSync(full, { encoding: "utf8" }))) {
+        if (
+          QUOTED_PRINTABLE_EQUALS.test(
+            fs.readFileSync(full, { encoding: "utf8" }),
+          )
+        ) {
           offenders.push(Path.relative(TEMPLATES_DIR, full));
         }
       }

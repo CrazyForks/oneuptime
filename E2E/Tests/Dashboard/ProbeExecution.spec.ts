@@ -100,6 +100,16 @@ interface SharedContext {
   refusedStepIds: MonitorStepIds;
 }
 
+/*
+ * The probe never sees a browser: this spec creates its monitors over the API
+ * and reads back what the probe wrote. Running it a second time in firefox
+ * would double the wall clock, and would put two projects' worth of
+ * every-minute monitors on the same single probe, for no extra coverage.
+ */
+test.skip(({ browserName }: { browserName: string }): boolean => {
+  return browserName !== "chromium";
+}, "Probe execution is API driven; the chromium run covers it.");
+
 test.describe.configure({ mode: "serial", retries: 1 });
 
 test.describe("Probe executes checks and reports them", () => {
@@ -421,9 +431,15 @@ test.describe("Probe executes checks and reports them", () => {
       entry.responseBody,
       "no response body — nothing was dialled",
     ).toBeFalsy();
+
+    /*
+     * Headers default to {} rather than being absent, so emptiness is the
+     * assertion — an empty header map is exactly as much proof that no socket
+     * was opened as a missing one, and toBeFalsy() rejects it.
+     */
     expect(
-      entry.responseHeaders,
+      Object.keys(entry.responseHeaders || {}),
       "no response headers — nothing was dialled",
-    ).toBeFalsy();
+    ).toEqual([]);
   });
 });

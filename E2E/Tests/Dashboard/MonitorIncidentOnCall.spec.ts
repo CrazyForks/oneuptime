@@ -194,9 +194,12 @@ test.describe("Monitor -> Incident -> On-Call -> User Alerted", () => {
         select: { _id: true, incomingRequestSecretKey: true },
       });
 
-      const secretKey: string = String(
-        monitor["incomingRequestSecretKey"] ?? "",
-      );
+      /*
+       * The column is an ObjectID, so it arrives as { _type, value } and
+       * String() would make it "[object Object]" — which is exactly what the
+       * ingest rejected as an invalid route.
+       */
+      const secretKey: string = toId(monitor["incomingRequestSecretKey"]);
 
       expect(
         secretKey,
