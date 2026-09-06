@@ -64,47 +64,18 @@ import { ReplayRailTabId } from "./Rail/ReplaySignalTypes";
  * activeTabId it can restore.
  */
 
+import type { ReplaySessionDetails } from "./ReplaySessionDetails";
+
 export type ReplayCorrelationPanelTabId = "session" | "provenance" | "fidelity";
 
 export const REPLAY_CORRELATION_PANEL_TAB_IDS: ReadonlyArray<ReplayCorrelationPanelTabId> =
   ["session", "provenance", "fidelity"];
 
-export interface ReplaySessionDetails {
-  entryUrl: string;
-  exitUrl: string;
-  browserName: string;
-  browserVersion: string;
-  osName: string;
-  deviceType: string;
-  countryCode: string;
-  /*
-   * null: the manifest did not supply identity - the viewer lacks the
-   * identity permission, so the panel must not claim the session is
-   * anonymous. "": supplied and empty - the page never called identify().
-   */
-  identifiedUserLabel: string | null;
-  /* Only present when the manifest supplied them (same ACL as the label). */
-  identifiedUserTraits?: Record<string, string> | null | undefined;
-  tags?: Record<string, string> | null | undefined;
-  maskingMode: string;
-  consentState: string;
-  triggerReason: string;
-  recorderVersion: string;
-  rrwebVersion: string;
-  recorderCapabilities?: Array<string> | undefined;
-  viewportWidth: number;
-  viewportHeight: number;
-  clockSkewMs: number;
-  payloadBytes: number;
-  startTime: string;
-  endTime: string;
-  durationMs?: number | undefined;
-  /* Blank while the session is still open. */
-  sealedReason?: string | undefined;
-  isFinalized?: boolean | undefined;
-  traceIds: Array<string>;
-  exceptionFingerprints: Array<string>;
-}
+/*
+ * The details shape lives in ReplaySessionDetails.ts, which imports no
+ * React, so the manifest builder can produce one without this module.
+ */
+export type { ReplaySessionDetails };
 
 /*
  * Counts the rail has already fetched, so the Session tab can say "37 logs"

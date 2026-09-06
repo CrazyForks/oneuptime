@@ -13,7 +13,9 @@ import Span from "Common/Models/AnalyticsModels/Span";
  * pure route function; the other half is source-level, asserting that no
  * surface builds the player URL by hand any more.
  *
- * ReplayLink pulls in RouteMap, which pulls in Common/UI/Config, which reads
+ * The route builder lives in ReplayLinkRoute.ts rather than in the component,
+ * so this file never imports react - App has no react installed, by design.
+ * It still pulls in RouteMap, which pulls in Common/UI/Config, which reads
  * `window` on load - so the module is imported after a browser stub exists
  * (same approach as ReplayPlayerUrlState.test.ts).
  */
@@ -24,7 +26,7 @@ const SESSION_ID: string = "a1b2c3d4e5f60718293a4b5c6d7e8f90";
 const AT_UNIX_MS: number = 1_757_000_030_000;
 
 type ReplayLinkModule =
-  typeof import("../../FeatureSet/Dashboard/src/Components/SessionReplay/ReplayLink");
+  typeof import("../../FeatureSet/Dashboard/src/Components/SessionReplay/ReplayLinkRoute");
 type UrlStateModule =
   typeof import("../../FeatureSet/Dashboard/src/Components/SessionReplay/ReplayPlayerUrlState");
 type ReplaySignalsModule =
@@ -87,7 +89,7 @@ beforeAll(async () => {
   }
 
   replayLink = await import(
-    "../../FeatureSet/Dashboard/src/Components/SessionReplay/ReplayLink"
+    "../../FeatureSet/Dashboard/src/Components/SessionReplay/ReplayLinkRoute"
   );
   urlState = await import(
     "../../FeatureSet/Dashboard/src/Components/SessionReplay/ReplayPlayerUrlState"
@@ -216,9 +218,13 @@ describe("ReplayLink route (buildReplayLinkRoute)", () => {
 
 describe("every inbound surface builds its player URL through the shared builder", () => {
   test("ReplayLink delegates to buildReplayMomentRoute and no longer populates the route by hand", () => {
-    const source: string = readSource(
-      "Components/SessionReplay/ReplayLink.tsx",
-    );
+    /*
+     * The route is built in ReplayLinkRoute.ts; the component only renders
+     * what comes back, so both halves are read here.
+     */
+    const source: string =
+      readSource("Components/SessionReplay/ReplayLinkRoute.ts") +
+      readSource("Components/SessionReplay/ReplayLink.tsx");
 
     expect(source).toContain("buildReplayMomentRoute(");
     expect(source).not.toContain("RUM_APPLICATION_VIEW_SESSION_REPLAY_VIEW");

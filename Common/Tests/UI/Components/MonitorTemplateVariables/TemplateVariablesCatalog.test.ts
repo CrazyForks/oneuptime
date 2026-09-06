@@ -16,6 +16,21 @@ const SERIES_GROUP_TITLE: string = "Series Labels (per-host / per-container)";
 const METRIC_GROUP_TITLE: string = "Metric";
 
 /*
+ * The ready-made renderings of the breaching series' identity
+ * (seriesResourceSuffix and friends). Emitted for EVERY monitor type, right
+ * after the identity group: MonitorTemplateUtil defines these
+ * unconditionally, and they resolve to an empty string on an ungrouped
+ * monitor rather than leaving a raw {{...}} in the rendered title.
+ */
+const RESOURCE_GROUP_TITLE: string = "Affected Resource";
+
+/* Every getVariables() answer opens with these two, in this order. */
+const ALWAYS_GROUP_TITLES: Array<string> = [
+  MONITOR_GROUP_TITLE,
+  RESOURCE_GROUP_TITLE,
+];
+
+/*
  * The eight infrastructure/telemetry monitor types that (a) get the single
  * "Metric" per-type group AND (b) additionally get the "Series Labels" group.
  * Both lists in the source are identical, so one constant covers both.
@@ -349,11 +364,11 @@ describe("TemplateVariablesCatalog.getVariables - per-type groups", () => {
     });
   }
 
-  it("orders the identity group before the per-type group", () => {
+  it("orders the identity and resource groups before the per-type group", () => {
     const groups: Array<TemplateVariableGroup> =
       TemplateVariablesCatalog.getVariables({ monitorType: MonitorType.DNS });
 
-    expect(titlesOf(groups)).toEqual([MONITOR_GROUP_TITLE, "DNS"]);
+    expect(titlesOf(groups)).toEqual([...ALWAYS_GROUP_TITLES, "DNS"]);
   });
 
   it("treats API and Website as the same case (identical Response group)", () => {
@@ -442,12 +457,11 @@ describe("TemplateVariablesCatalog.getVariables - per-type groups", () => {
 
 describe("TemplateVariablesCatalog.getVariables - identity-only monitor types", () => {
   for (const monitorType of IDENTITY_ONLY_TYPES) {
-    it(`returns only the identity group for ${monitorType} (default branch, no series labels)`, () => {
+    it(`returns only the always-on groups for ${monitorType} (default branch, no series labels)`, () => {
       const groups: Array<TemplateVariableGroup> =
         TemplateVariablesCatalog.getVariables({ monitorType });
 
-      expect(groups.length).toBe(1);
-      expect(titlesOf(groups)).toEqual([MONITOR_GROUP_TITLE]);
+      expect(titlesOf(groups)).toEqual(ALWAYS_GROUP_TITLES);
     });
   }
 
@@ -459,13 +473,13 @@ describe("TemplateVariablesCatalog.getVariables - identity-only monitor types", 
       });
 
     expect(findGroup(groups, SERIES_GROUP_TITLE)).toBeUndefined();
-    expect(groups.length).toBe(1);
+    expect(titlesOf(groups)).toEqual(ALWAYS_GROUP_TITLES);
   });
 });
 
 describe("TemplateVariablesCatalog.getVariables - infrastructure series labels", () => {
   for (const monitorType of INFRA_TYPES) {
-    it(`emits identity, Metric and series-labels groups in order for ${monitorType}`, () => {
+    it(`emits identity, resource, Metric and series-labels groups in order for ${monitorType}`, () => {
       const groups: Array<TemplateVariableGroup> =
         TemplateVariablesCatalog.getVariables({
           monitorType,
@@ -473,7 +487,7 @@ describe("TemplateVariablesCatalog.getVariables - infrastructure series labels",
         });
 
       expect(titlesOf(groups)).toEqual([
-        MONITOR_GROUP_TITLE,
+        ...ALWAYS_GROUP_TITLES,
         METRIC_GROUP_TITLE,
         SERIES_GROUP_TITLE,
       ]);
@@ -612,7 +626,7 @@ describe("TemplateVariablesCatalog.getVariables - non-infra types ignore series 
       });
 
     expect(findGroup(groups, SERIES_GROUP_TITLE)).toBeUndefined();
-    expect(titlesOf(groups)).toEqual([MONITOR_GROUP_TITLE, "Response"]);
+    expect(titlesOf(groups)).toEqual([...ALWAYS_GROUP_TITLES, "Response"]);
   });
 });
 
@@ -621,7 +635,7 @@ describe("TemplateVariablesCatalog.getVariables - structural invariants", () => 
     MonitorType,
   ) as Array<MonitorType>;
 
-  it("returns between one and three groups for every monitor type", () => {
+  it("returns between two and four groups for every monitor type, always opening with the two unconditional ones", () => {
     for (const monitorType of allTypes) {
       const groups: Array<TemplateVariableGroup> =
         TemplateVariablesCatalog.getVariables({
@@ -629,8 +643,10 @@ describe("TemplateVariablesCatalog.getVariables - structural invariants", () => 
           seriesAttributeKeys: ["host.name"],
         });
 
-      expect(groups.length).toBeGreaterThanOrEqual(1);
-      expect(groups.length).toBeLessThanOrEqual(3);
+      /* Identity + Affected Resource, then at most a per-type and a series group. */
+      expect(groups.length).toBeGreaterThanOrEqual(2);
+      expect(groups.length).toBeLessThanOrEqual(4);
+      expect(titlesOf(groups).slice(0, 2)).toEqual(ALWAYS_GROUP_TITLES);
     }
   });
 

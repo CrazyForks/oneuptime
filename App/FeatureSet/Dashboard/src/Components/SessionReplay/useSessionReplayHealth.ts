@@ -16,6 +16,19 @@ import {
   parseRecordingHealthStatus,
 } from "Common/Utils/Rum/SessionReplayHealth";
 import { readDtoStringArray } from "Common/Types/Rum/SessionReplayApi";
+import {
+  describeHealthError,
+  SessionReplayHealthError,
+  SessionReplayHealthErrorKind,
+} from "./SessionReplayHealthError";
+
+/*
+ * The failure vocabulary lives in a React-free sibling so surfaces (and node
+ * tests) can name a failure without importing the poller. Re-exported here
+ * because every caller reads it from this module.
+ */
+export { describeHealthError };
+export type { SessionReplayHealthError, SessionReplayHealthErrorKind };
 
 /*
  * useSessionReplayHealth(rumApplicationId): the one source of "is recording
@@ -44,20 +57,6 @@ export const SESSION_REPLAY_HEALTH_POLL_FAST_MS: number = 10 * 1000;
 
 /* A status line: fresh enough for "last chunk 2m ago" to stay honest. */
 export const SESSION_REPLAY_HEALTH_POLL_SLOW_MS: number = 60 * 1000;
-
-export type SessionReplayHealthErrorKind =
-  /* 401/403: the viewer lacks the session-replay read permission. */
-  | "permission"
-  /* 402: the project's plan does not include session replay. */
-  | "plan"
-  /* Anything else: network, 5xx, malformed body. */
-  | "other";
-
-export interface SessionReplayHealthError {
-  kind: SessionReplayHealthErrorKind;
-  /* The server's own message, kept for the "details" line only. */
-  message: string;
-}
 
 /*
  * The health facts the surfaces render beside the parsed status. null always
@@ -156,39 +155,6 @@ export function classifyHealthError(err: unknown): SessionReplayHealthError {
   return {
     kind: kind,
     message: API.getFriendlyMessage(err as HTTPErrorResponse),
-  };
-}
-
-/*
- * Honest copy per failure class. The raw server string is kept as a
- * secondary line, never as the headline: "Please upgrade your plan" and
- * "Not authorized" do not tell the person which permission or plan they
- * are missing, and both used to be printed bare in red.
- */
-export function describeHealthError(error: SessionReplayHealthError): {
-  title: string;
-  detail: string;
-} {
-  if (error.kind === "permission") {
-    return {
-      title: "You cannot see recording health",
-      detail:
-        "Reading recording health needs the Read Session Replay permission (project owners, admins and telemetry admins have it). Ask a project admin to grant it, or to run this check for you.",
-    };
-  }
-
-  if (error.kind === "plan") {
-    return {
-      title: "Recording health is not included in this project's plan",
-      detail:
-        "Session replay needs a plan that includes it. Once the plan is upgraded, this check and the recordings themselves become available. The project-wide master switch is never plan-gated.",
-    };
-  }
-
-  return {
-    title: "Recording health could not be loaded",
-    detail:
-      "The health request failed, so nothing here says whether recording works. It retries on its own; the next poll may succeed.",
   };
 }
 

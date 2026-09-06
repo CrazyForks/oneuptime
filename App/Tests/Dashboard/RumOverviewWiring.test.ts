@@ -23,16 +23,41 @@ const SOURCE: string = fs.readFileSync(
   "utf8",
 );
 
-function block(startMarker: string, endMarker: string): string {
-  const start: number = SOURCE.indexOf(startMarker);
+/*
+ * The page's pure decisions (the tile's range wording, the ranged list
+ * route, the health row) live beside it in OverviewHelpers.ts, which has no
+ * React import, so they can be run for real from here.
+ */
+const HELPERS_SOURCE: string = fs.readFileSync(
+  path.join(
+    __dirname,
+    "../../FeatureSet/Dashboard/src/Pages/Rum/View/OverviewHelpers.ts",
+  ),
+  "utf8",
+);
+
+function blockIn(
+  source: string,
+  startMarker: string,
+  endMarker: string,
+): string {
+  const start: number = source.indexOf(startMarker);
 
   expect(start).toBeGreaterThan(-1);
 
-  const end: number = SOURCE.indexOf(endMarker, start);
+  const end: number = source.indexOf(endMarker, start);
 
   expect(end).toBeGreaterThan(start);
 
-  return SOURCE.slice(start, end);
+  return source.slice(start, end);
+}
+
+function block(startMarker: string, endMarker: string): string {
+  return blockIn(SOURCE, startMarker, endMarker);
+}
+
+function helperBlock(startMarker: string, endMarker: string): string {
+  return blockIn(HELPERS_SOURCE, startMarker, endMarker);
 }
 
 describe("correlation-11: the sessions tile names the range it counted and carries it to the list", () => {
@@ -51,7 +76,7 @@ describe("correlation-11: the sessions tile names the range it counted and carri
   });
 
   test("the range helpers write the explorer grammar (range, start, end) and lower-case the preset", () => {
-    const describe: string = block(
+    const describe: string = helperBlock(
       "export function describeTimeRangeForTile",
       "\n}\n",
     );
@@ -59,7 +84,7 @@ describe("correlation-11: the sessions tile names the range it counted and carri
     expect(describe).toContain('"custom range"');
     expect(describe).toContain(".toLowerCase()");
 
-    const ranged: string = block(
+    const ranged: string = helperBlock(
       "export function buildRangedListRoute",
       "\n}\n",
     );
@@ -150,27 +175,18 @@ describe("correlation-14: a failed client lookup is unknown, not zero", () => {
  * carries the same diagnosis the list strip and the settings card show.
  *
  * The value function is pure, so it is exercised for real rather than read
- * off the source. Overview.tsx pulls in Common/UI/Config, which reads
- * `window` on load, so it is imported after a browser stub exists.
+ * off the source. It lives in OverviewHelpers.ts beside the page:
+ * Overview.tsx is React, and App has no react installed, so the page module
+ * itself is not importable from a node test by design.
  */
-type OverviewModule =
-  typeof import("../../FeatureSet/Dashboard/src/Pages/Rum/View/Overview");
+type OverviewHelpersModule =
+  typeof import("../../FeatureSet/Dashboard/src/Pages/Rum/View/OverviewHelpers");
 
-let overview: OverviewModule;
+let overview: OverviewHelpersModule;
 
 beforeAll(async () => {
-  (globalThis as Record<string, unknown>)["window"] = {
-    location: { pathname: "/", search: "", hash: "" },
-    history: {
-      state: null,
-      replaceState: (): void => {
-        // never asserted on
-      },
-    },
-  };
-
   overview = await import(
-    "../../FeatureSet/Dashboard/src/Pages/Rum/View/Overview"
+    "../../FeatureSet/Dashboard/src/Pages/Rum/View/OverviewHelpers"
   );
 });
 

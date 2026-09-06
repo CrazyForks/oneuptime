@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, jest, test } from "@jest/globals";
+import { beforeAll, describe, expect, test } from "@jest/globals";
 import TimeRange from "Common/Types/Time/TimeRange";
 import InBetween from "Common/Types/BaseDatabase/InBetween";
 import {
@@ -14,59 +14,14 @@ import {
 /*
  * getEmptyReason: the seven honest answers to "why is the list empty", in
  * strict precedence, plus the copy for the two 400s the search can trip.
- * Pure, but it lives beside the view in SessionReplayEmptyState.tsx, which
- * pulls in Common/UI (which reads `window` on load) - so the module is
- * imported after a browser stub exists, the same way
- * ReplayPlayerUrlState.test.ts does it.
+ * Both are pure and live in SessionReplayEmptyReason.ts, apart from the view
+ * that renders them (SessionReplayEmptyState.tsx) - which is React, and so
+ * out of reach of a node test by design. The rendered view is covered by
+ * Common/Tests/UI/Rum/SessionReplayEmptyState.test.tsx.
  */
-
-/*
- * Only the pure exports are under test. The view's neighbours (the setup
- * guide, the health card's link builder, the health hook) pull in DOM-only
- * libraries at import time, so they are stubbed here; the rendered view is
- * covered by Common/Tests/UI/Rum/SessionReplayEmptyState.test.tsx.
- */
-jest.mock(
-  "../../FeatureSet/Dashboard/src/Components/SessionReplay/SessionReplaySetupGuide",
-  () => {
-    return {
-      __esModule: true,
-      default: (): null => {
-        return null;
-      },
-    };
-  },
-);
-
-jest.mock(
-  "../../FeatureSet/Dashboard/src/Components/SessionReplay/RecordingHealthCard",
-  () => {
-    return {
-      __esModule: true,
-      getRecordingHealthActionLink: (): {
-        to: string;
-        openInNewTab: boolean;
-      } => {
-        return { to: "", openInNewTab: false };
-      },
-    };
-  },
-);
-
-jest.mock(
-  "../../FeatureSet/Dashboard/src/Components/SessionReplay/useSessionReplayHealth",
-  () => {
-    return {
-      __esModule: true,
-      default: (): Record<string, never> => {
-        return {};
-      },
-    };
-  },
-);
 
 type EmptyStateModule =
-  typeof import("../../FeatureSet/Dashboard/src/Components/SessionReplay/SessionReplayEmptyState");
+  typeof import("../../FeatureSet/Dashboard/src/Components/SessionReplay/SessionReplayEmptyReason");
 
 let emptyState: EmptyStateModule;
 
@@ -140,55 +95,8 @@ const FILTERED: SessionReplayAdvancedFilters = {
 };
 
 beforeAll(async () => {
-  (globalThis as Record<string, unknown>)["window"] = {
-    location: {
-      pathname: "/dashboard/p/rum/a/session-replay",
-      search: "",
-      hash: "",
-    },
-    history: {
-      state: null,
-      replaceState: (): void => {
-        // never asserted on
-      },
-    },
-    addEventListener: (): void => {
-      // no-op
-    },
-    removeEventListener: (): void => {
-      // no-op
-    },
-  };
-  (globalThis as Record<string, unknown>)["document"] = {
-    addEventListener: (): void => {
-      // no-op
-    },
-    removeEventListener: (): void => {
-      // no-op
-    },
-    hidden: false,
-  };
-
-  for (const storageName of ["sessionStorage", "localStorage"]) {
-    Object.defineProperty(globalThis, storageName, {
-      value: {
-        getItem: (): null => {
-          return null;
-        },
-        setItem: (): void => {
-          // no-op
-        },
-        removeItem: (): void => {
-          // no-op
-        },
-      },
-      configurable: true,
-      writable: true,
-    });
-  }
-
   emptyState = await import(
-    "../../FeatureSet/Dashboard/src/Components/SessionReplay/SessionReplayEmptyState"
+    "../../FeatureSet/Dashboard/src/Components/SessionReplay/SessionReplayEmptyReason"
   );
 });
 

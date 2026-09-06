@@ -15,6 +15,15 @@ import DataSourceEgressGuard, {
 import SSRFProtection from "../SSRFProtection";
 import CaptureSpan from "../Telemetry/CaptureSpan";
 
+/*
+ * How often to wake Node's event loop while sandboxed code is running. See
+ * the comment on hostBridgeTicker in runCodeInSandbox: the isolate's host
+ * bridges only advance on an event-loop turn, and a loop with nothing else
+ * pending sleeps until its next timer. 5ms is small against any real host
+ * operation and costs one empty callback per tick.
+ */
+const HOST_BRIDGE_TICK_MS: number = 5;
+
 export default class VMRunner {
   /*
    * Works out which URL the sandbox's axios call will actually dial, so the
@@ -1843,6 +1852,34 @@ export default class VMRunner {
       let result: unknown;
       let scriptError: Error | undefined;
 
+      /*
+       * Keep Node's event loop turning for as long as sandboxed code is
+       * running.
+       *
+       * Every host bridge the sandbox has - axios, sleep, the log sink - is an
+       * isolated-vm async callback: the isolate posts a call onto THIS thread,
+       * this thread answers it, and the isolate resumes. Each of those hops
+       * only makes progress when the event loop takes a turn, and a loop with
+       * nothing else to do parks until its next TIMER rather than spinning. On
+       * an otherwise idle process the nearest timer is usually the overall
+       * timeout armed just below, so a single `await sleep(0)` - or a request
+       * the SSRF guard refuses synchronously, in microseconds - came back
+       * 20 seconds later as "Script execution timed out". Under Jest the
+       * nearest timer was whatever the runner happened to have queued, which
+       * is why the same test took 100ms on one run and 900ms on the next, and
+       * why the VMRunner suites failed on CI while passing locally.
+       *
+       * A no-op ticker gives the loop a reason to wake. It runs only while a
+       * script is in flight and is cleared before this method returns.
+       */
+      const hostBridgeTicker: ReturnType<typeof global.setInterval> =
+        global.setInterval((): void => {
+          /*
+           * Intentionally empty: existing only so libuv wakes on a known
+           * cadence instead of sleeping until some unrelated timer.
+           */
+        }, HOST_BRIDGE_TICK_MS);
+
       try {
         // Run with overall timeout covering both CPU and I/O wait.
         const resultPromise: Promise<unknown> = context.eval(wrappedCode, {
@@ -1868,6 +1905,8 @@ export default class VMRunner {
         result = await Promise.race([resultPromise, overallTimeout]);
       } catch (error: unknown) {
         scriptError = sanitizeScriptError(error);
+      } finally {
+        global.clearInterval(hostBridgeTicker);
       }
 
       // Parse the JSON string returned from inside the isolate

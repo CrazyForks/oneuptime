@@ -1,46 +1,15 @@
 import AppLink from "../AppLink/AppLink";
 import React, { FunctionComponent, ReactElement } from "react";
 import Route from "Common/Types/API/Route";
-import ObjectID from "Common/Types/ObjectID";
-import { ReplayRailTabId } from "./Rail/ReplaySignalTypes";
-import { buildReplayMomentRoute } from "./ReplayPlayerUrlState";
-
-export interface ComponentProps {
-  rumApplicationId?: ObjectID | string | undefined;
-  sessionId?: string | undefined;
-  /*
-   * The absolute moment (the row's own timestamp) -> ?at=. Preferred: the
-   * caller knows the wall clock, the player knows the recording's start,
-   * and the conversion happens once, in the player, against the header.
-   */
-  atTime?: Date | undefined;
-  /* An offset into the recording -> ?t=. Used when only an offset is known. */
-  atOffsetMs?: number | undefined;
-  /* The rail row to select on arrival (log:<id>, span:<id>, exc:<id>). */
-  signal?: string | undefined;
-  /* The rail tab to open on arrival. */
-  rail?: ReplayRailTabId | undefined;
-  label?: string | undefined;
-  className?: string | undefined;
-}
+import { buildReplayLinkRoute, ReplayLinkRouteProps } from "./ReplayLinkRoute";
 
 /*
- * The route this link points at, or null when it should not render. Kept
- * separate from the component so a node test can pin the URL grammar
- * without rendering. Every inbound link goes through
- * buildReplayMomentRoute so the pre-roll (1s for a row, 10s for an
- * exception signal) and the clamp at 0 are the same from every surface.
+ * The props and the route builder live in ReplayLinkRoute.ts, which has no
+ * React import, so a node test can pin the URL grammar. Re-exported under
+ * the names callers already use.
  */
-export function buildReplayLinkRoute(props: ComponentProps): Route | null {
-  return buildReplayMomentRoute({
-    rumApplicationId: props.rumApplicationId,
-    sessionId: props.sessionId,
-    at: props.atTime,
-    t: props.atOffsetMs,
-    signal: props.signal,
-    rail: props.rail,
-  });
-}
+export { buildReplayLinkRoute };
+export type ComponentProps = ReplayLinkRouteProps;
 
 /*
  * Cross-link from anything carrying a sessionId to the recording of it.

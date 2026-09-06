@@ -15,7 +15,7 @@ import {
   readDtoStringMap,
   readDtoUnixMs,
 } from "Common/Types/Rum/SessionReplayApi";
-import type { ReplaySessionDetails } from "./ReplayCorrelationPanel";
+import type { ReplaySessionDetails } from "./ReplaySessionDetails";
 
 /*
  * The /manifest response, mapped onto what the player needs.
