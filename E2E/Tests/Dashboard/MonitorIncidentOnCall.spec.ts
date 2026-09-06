@@ -627,6 +627,17 @@ test.describe("Monitor -> Incident -> On-Call -> User Alerted", () => {
   });
 
   test("the on-call user is on the escalation rules that paged them", async () => {
+    /*
+     * This one reads rows the two flow tests above CREATE, so it skips for
+     * the same reason they do: with no policy ever attached to a monitor,
+     * there are no escalation-rule users to find and its assertion would
+     * report a missing policy as a missing user.
+     */
+    test.skip(
+      Boolean(ctx.probeEgressRefusal),
+      `The flows that create the on-call policy cannot run here: ${ctx.probeEgressRefusal}`,
+    );
+
     test.setTimeout(120000);
 
     /*
