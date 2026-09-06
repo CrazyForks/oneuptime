@@ -1653,6 +1653,28 @@ These are no longer recorded against the project and have to be cancelled by han
     return createdItem;
   }
 
+  /*
+   * NOTE ON THE TWO-TIER SCALE, and what it costs downstream.
+   *
+   * This seeds TWO alert severities (High 1 / Low 2) while
+   * `addDefaultIncidentSeverity` immediately below seeds THREE
+   * (Critical Incident 1 / Major Incident 2 / Minor Incident 3). That
+   * asymmetry is load-bearing for monitor recommendations:
+   * `MonitorRecommendationSeverityMapper` maps a recommendation's declared
+   * `Critical` onto rank 1 and `Warning` onto rank 2, so on a default project
+   * a Warning template opens a "Major Incident" but an alert whose severity
+   * reads "Low" — which is how an alert email can say SEVERITY: Low for a
+   * catalog card badged Warning.
+   *
+   * If a third alert tier is ever added here to close that gap, it CANNOT
+   * ship alone. This function only seeds names a project does not already
+   * have, so existing projects would keep the two-tier scale and map Warning
+   * differently from new ones indefinitely. It needs a paired data migration
+   * over every existing project — see
+   * App/FeatureSet/Workers/DataMigrations/AddDefaultAlertSeverityAndStateToExistingProjects.ts
+   * for the shape — and that migration has to decide what to do about the
+   * `order` of a "Low" row a project may have reordered or renamed itself.
+   */
   @CaptureSpan()
   public async addDefaultAlertSeverity(createdItem: Model): Promise<Model> {
     const projectId: ObjectID = createdItem.id!;

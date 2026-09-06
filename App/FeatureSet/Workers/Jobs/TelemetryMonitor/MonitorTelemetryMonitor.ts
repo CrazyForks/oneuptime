@@ -2928,24 +2928,29 @@ const monitorDockerSwarm: MonitorDockerSwarmFunction = async (data: {
     }
 
     /*
-     * Docker Swarm resource filters. The docker_stats receiver keeps
-     * container identity in datapoint labels (stored unprefixed):
-     * `container.name` (a Swarm task's container is
-     * `<service>.<slot>.<taskid>`) and `container.image.name`. The
-     * node/service hints map to the `docker.swarm.node.name` /
-     * `docker.swarm.service.name` datapoint attributes when the agent
-     * stamps them.
+     * Docker Swarm resource filters. The docker_stats receiver emits one
+     * ResourceMetrics per container and carries container identity as OTLP
+     * RESOURCE attributes, so ClickHouse stores them `resource.`-prefixed:
+     * `resource.container.name` (a Swarm task's container is
+     * `<service>.<slot>.<taskid>`) and `resource.container.image.name` --
+     * the same spelling the Docker and Podman paths above use for the same
+     * receiver, the same one the templates group by, and the same one
+     * OtelMetricsIngestService reads back in bufferDockerSwarmTaskMetric.
+     * The node/service hints map to the `docker.swarm.node.name` /
+     * `docker.swarm.service.name` attributes when the agent stamps them
+     * (it currently does not).
      */
     if (dockerSwarmMonitorConfig.resourceFilters) {
       const resourceFilters: DockerSwarmResourceFilters =
         dockerSwarmMonitorConfig.resourceFilters;
 
       if (resourceFilters.containerName) {
-        attributes["container.name"] = resourceFilters.containerName;
+        attributes["resource.container.name"] = resourceFilters.containerName;
       }
 
       if (resourceFilters.containerImage) {
-        attributes["container.image.name"] = resourceFilters.containerImage;
+        attributes["resource.container.image.name"] =
+          resourceFilters.containerImage;
       }
 
       if (resourceFilters.nodeName) {
@@ -3046,11 +3051,20 @@ const monitorDockerSwarm: MonitorDockerSwarmFunction = async (data: {
         for (const metric of rawMetrics) {
           const metricAttrs: JSONObject =
             (metric.attributes as JSONObject) || {};
+          /*
+           * Prefixed, for the same reason as the filter above: the
+           * docker_stats receiver puts container identity on the RESOURCE,
+           * so ClickHouse stores `resource.container.name`. Reading the
+           * bare key returned undefined for every row, which collapsed the
+           * whole "Affected Tasks" breakdown into one anonymous entry
+           * keyed "|||" and made MonitorCriteriaEvaluator suppress the
+           * table entirely (hasIdentity was false).
+           */
           const containerName: string | undefined = metricAttrs[
-            "container.name"
+            "resource.container.name"
           ] as string | undefined;
           const containerImage: string | undefined = metricAttrs[
-            "container.image.name"
+            "resource.container.image.name"
           ] as string | undefined;
           const nodeName: string | undefined = metricAttrs[
             "docker.swarm.node.name"

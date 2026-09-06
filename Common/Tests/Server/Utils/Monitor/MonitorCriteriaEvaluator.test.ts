@@ -4,6 +4,7 @@ import MonitorStep from "../../../../Types/Monitor/MonitorStep";
 import MetricMonitorResponse, {
   ProxmoxAffectedResource,
   CephAffectedResource,
+  KubernetesAffectedResource,
 } from "../../../../Types/Monitor/MetricMonitor/MetricMonitorResponse";
 import {
   getProxmoxAlertTemplateById,
@@ -14,6 +15,13 @@ import {
   CephAlertTemplate,
 } from "../../../../Types/Monitor/CephAlertTemplates";
 import ObjectID from "../../../../Types/ObjectID";
+import MonitorCriteriaInstance from "../../../../Types/Monitor/MonitorCriteriaInstance";
+import {
+  CheckOn,
+  CriteriaFilter,
+  FilterType,
+} from "../../../../Types/Monitor/CriteriaFilter";
+import FilterCondition from "../../../../Types/Filter/FilterCondition";
 
 /*
  * WI-21 monitor-routing seam: the worker-side monitorProxmox /
@@ -48,6 +56,17 @@ type EvaluatorPrivate = {
     dataToProcess: unknown;
     monitorStep: MonitorStep;
     monitor: Monitor;
+    criteriaInstance?: MonitorCriteriaInstance | undefined;
+  }) => string | null;
+  buildKubernetesRootCauseAnalysis: (input: {
+    breakdown: {
+      clusterName: string;
+      metricName: string;
+      metricFriendlyName: string;
+      affectedResources: Array<KubernetesAffectedResource>;
+      attributes: Record<string, string>;
+    };
+    topResource: KubernetesAffectedResource;
   }) => string | null;
 };
 
@@ -318,5 +337,423 @@ describe("MonitorCriteriaEvaluator - Ceph root cause breakdown", () => {
     expect(context).toContain("- OSD Filter: osd.3");
     expect(context).toContain("- Pool ID Filter: 2");
     expect(context).toContain("- Metric: `ceph_osd_up`");
+  });
+});
+
+/*
+ * REGRESSION: the affected-resources filter used to be a hardcoded
+ * `metricValue > 0`.
+ *
+ * ceph_osd_up / ceph_osd_in / ceph_mon_quorum_status are 0/1 gauges and
+ * the OSD Down / OSD Out / Quorum Degraded criteria fire on `< 1`, so the
+ * ZERO rows are the down daemons — the filter dropped exactly the daemons
+ * the incident was about and rendered a table of the HEALTHY ones, under
+ * an incident description that ends "Check the root cause for the affected
+ * ceph_daemon label."
+ *
+ * The predicate now mirrors the criteria that matched, but ONLY inverts
+ * for a criteria that fires when the metric FALLS. Every upward comparison
+ * (`> 0` health checks, PG counts, latency, capacity ratios) and every
+ * `= 0` RECOVERY criteria keeps the old `> 0`, worst-highest-first table
+ * byte for byte — the recovery case matters because deriving the predicate
+ * from an `= 0` criteria would newly render an "Affected Resources" table
+ * of every resource sitting at 0 on the all-clear.
+ */
+describe("MonitorCriteriaEvaluator - Ceph affected-resources breach predicate", () => {
+  function cephCriteriaInstance(index: number): MonitorCriteriaInstance {
+    const instances: Array<MonitorCriteriaInstance> =
+      cephStep().data!.monitorCriteria!.data!.monitorCriteriaInstanceArray;
+    const instance: MonitorCriteriaInstance | undefined = instances[index];
+    if (!instance) {
+      throw new Error(`ceph-osd-down criteria instance ${index} missing`);
+    }
+    return instance;
+  }
+
+  /** The real ceph-osd-down FIRING criteria: ceph_osd_up < 1. */
+  function osdDownFiringCriteria(): MonitorCriteriaInstance {
+    return cephCriteriaInstance(0);
+  }
+
+  /** The real ceph-osd-down RECOVERY criteria (an upward comparison). */
+  function osdDownRecoveryCriteria(): MonitorCriteriaInstance {
+    const instances: Array<MonitorCriteriaInstance> =
+      cephStep().data!.monitorCriteria!.data!.monitorCriteriaInstanceArray;
+    return cephCriteriaInstance(instances.length - 1);
+  }
+
+  function syntheticCriteria(
+    filters: Array<CriteriaFilter>,
+  ): MonitorCriteriaInstance {
+    const instance: MonitorCriteriaInstance = new MonitorCriteriaInstance();
+    instance.data = {
+      monitorStatusId: undefined,
+      filterCondition: FilterCondition.Any,
+      filters: filters,
+      incidents: [],
+      alerts: [],
+      name: "synthetic",
+      description: "synthetic",
+      id: ObjectID.generate().toString(),
+    };
+    return instance;
+  }
+
+  function cephContext(input: {
+    affectedResources: Array<CephAffectedResource>;
+    metricName?: string;
+    criteriaInstance?: MonitorCriteriaInstance | undefined;
+  }): string | null {
+    return Evaluator.buildCephRootCauseContext({
+      dataToProcess: metricResponse({
+        cephResourceBreakdown: {
+          clusterName: "prod-cluster",
+          metricName: input.metricName || "ceph_osd_up",
+          metricFriendlyName: "OSD Up",
+          affectedResources: input.affectedResources,
+          attributes: {},
+        },
+      }),
+      monitorStep: cephStep(),
+      monitor: new Monitor(),
+      criteriaInstance: input.criteriaInstance,
+    });
+  }
+
+  test("the real ceph-osd-down criteria is a `< 1` comparison on the metric value", () => {
+    /*
+     * Guards the fixture: if the template stops firing on a fall, the
+     * rest of this suite is testing nothing.
+     */
+    const filters: Array<CriteriaFilter> =
+      osdDownFiringCriteria().data?.filters || [];
+
+    expect(filters.length).toBeGreaterThan(0);
+    expect(filters[0]!.checkOn).toBe(CheckOn.MetricValue);
+    expect(filters[0]!.filterType).toBe(FilterType.LessThan);
+    expect(filters[0]!.value).toBe(1);
+  });
+
+  test("a `< 1` availability criteria keeps the DOWN daemons and drops the healthy ones", () => {
+    const context: string | null = cephContext({
+      criteriaInstance: osdDownFiringCriteria(),
+      affectedResources: [
+        // The down OSD. The old `> 0` filter removed exactly this row.
+        { daemon: "osd.3", hostname: "ceph-node-1", metricValue: 0 },
+        { daemon: "osd.4", hostname: "ceph-node-2", metricValue: 1 },
+        { daemon: "osd.5", hostname: "ceph-node-3", metricValue: 1 },
+      ],
+    });
+
+    expect(context).toContain("| Daemon | Pool | Host | Value |");
+    expect(context).toContain("| `osd.3` | - | `ceph-node-1` | **0** |");
+    expect(context).not.toContain("osd.4");
+    expect(context).not.toContain("osd.5");
+    expect(context).toContain("**Affected Resources** (1 total)");
+  });
+
+  test("every down daemon survives the top-10 cap when the criteria fires on a fall", () => {
+    const affectedResources: Array<CephAffectedResource> = [
+      { daemon: "osd.1", metricValue: 0 },
+      { daemon: "osd.2", metricValue: 0 },
+    ];
+
+    /*
+     * Twelve healthy OSDs — enough to overflow the ten-row slice if the
+     * predicate ever stops filtering them out.
+     */
+    for (let i: number = 10; i < 22; i++) {
+      affectedResources.push({ daemon: `osd.${i}`, metricValue: 1 });
+    }
+
+    const context: string | null = cephContext({
+      criteriaInstance: osdDownFiringCriteria(),
+      affectedResources,
+    });
+
+    expect(context).toContain("**Affected Resources** (2 total)");
+    expect(context).toContain("`osd.1`");
+    expect(context).toContain("`osd.2`");
+    expect(context).not.toContain("`osd.10`");
+    expect(context).not.toContain("*... and");
+  });
+
+  test("a fall criteria sorts worst (lowest) first", () => {
+    const context: string | null = cephContext({
+      metricName: "ceph_osd_apply_latency_ms",
+      criteriaInstance: syntheticCriteria([
+        {
+          checkOn: CheckOn.MetricValue,
+          filterType: FilterType.LessThanOrEqualTo,
+          value: 50,
+        },
+      ]),
+      affectedResources: [
+        { daemon: "osd.mild", metricValue: 50 },
+        { daemon: "osd.worst", metricValue: 5 },
+        { daemon: "osd.fine", metricValue: 500 },
+      ],
+    });
+
+    expect(context).toContain("**Affected Resources** (2 total)");
+    expect(context).not.toContain("osd.fine");
+
+    const worstIndex: number = context!.indexOf("`osd.worst`");
+    const mildIndex: number = context!.indexOf("`osd.mild`");
+    expect(worstIndex).toBeGreaterThan(-1);
+    expect(mildIndex).toBeGreaterThan(worstIndex);
+  });
+
+  test("a `> 0` count criteria renders exactly as the hardcoded filter did", () => {
+    const context: string | null = cephContext({
+      metricName: "ceph_osd_apply_latency_ms",
+      criteriaInstance: syntheticCriteria([
+        {
+          checkOn: CheckOn.MetricValue,
+          filterType: FilterType.GreaterThan,
+          value: 0,
+        },
+      ]),
+      affectedResources: [
+        { daemon: "osd.3", hostname: "ceph-node-1", metricValue: 250 },
+        { poolId: "2", poolName: "rbd", metricValue: 91 },
+        { daemon: "osd.5", hostname: "ceph-node-2", metricValue: 0 },
+      ],
+    });
+
+    expect(context).toContain("| `osd.3` | - | `ceph-node-1` | **250** |");
+    expect(context).toContain("| - | `rbd` (`2`) | - | **91** |");
+    expect(context).not.toContain("osd.5");
+    expect(context).toContain("**Affected Resources** (2 total)");
+
+    // Still worst-HIGHEST-first for an upward comparison.
+    const osdIndex: number = context!.indexOf("`osd.3`");
+    const poolIndex: number = context!.indexOf("`rbd` (`2`)");
+    expect(poolIndex).toBeGreaterThan(osdIndex);
+  });
+
+  test("an `= 0` recovery criteria does NOT turn the all-clear into a table of zeroes", () => {
+    const context: string | null = cephContext({
+      metricName: "ceph_pg_degraded",
+      criteriaInstance: syntheticCriteria([
+        {
+          checkOn: CheckOn.MetricValue,
+          filterType: FilterType.EqualTo,
+          value: 0,
+        },
+      ]),
+      affectedResources: [
+        { poolId: "2", poolName: "rbd", metricValue: 0 },
+        { poolId: "3", poolName: "cephfs", metricValue: 0 },
+      ],
+    });
+
+    expect(context).not.toContain("| Daemon | Pool | Host | Value |");
+    expect(context).not.toContain("**Affected Resources**");
+  });
+
+  test("the real recovery criteria (an upward comparison) keeps the `> 0` fallback", () => {
+    const context: string | null = cephContext({
+      criteriaInstance: osdDownRecoveryCriteria(),
+      affectedResources: [
+        { daemon: "osd.3", metricValue: 0 },
+        { daemon: "osd.4", metricValue: 1 },
+      ],
+    });
+
+    expect(context).toContain("| `osd.4` | - | - | **1** |");
+    expect(context).not.toContain("osd.3");
+  });
+
+  test("no criteriaInstance falls back to dropping zero rows", () => {
+    const context: string | null = cephContext({
+      affectedResources: [
+        { daemon: "osd.3", metricValue: 0 },
+        { daemon: "osd.4", metricValue: 1 },
+      ],
+    });
+
+    expect(context).toContain("| `osd.4` | - | - | **1** |");
+    expect(context).not.toContain("osd.3");
+  });
+
+  test("a non-metric-value filter is ignored and keeps the `> 0` fallback", () => {
+    const context: string | null = cephContext({
+      criteriaInstance: syntheticCriteria([
+        {
+          checkOn: CheckOn.IsOnline,
+          filterType: FilterType.LessThan,
+          value: 1,
+        },
+      ]),
+      affectedResources: [
+        { daemon: "osd.3", metricValue: 0 },
+        { daemon: "osd.4", metricValue: 1 },
+      ],
+    });
+
+    expect(context).toContain("| `osd.4` | - | - | **1** |");
+    expect(context).not.toContain("osd.3");
+  });
+
+  test("a mixed fall/rise criteria keeps the `> 0` fallback rather than guessing", () => {
+    const context: string | null = cephContext({
+      criteriaInstance: syntheticCriteria([
+        {
+          checkOn: CheckOn.MetricValue,
+          filterType: FilterType.LessThan,
+          value: 1,
+        },
+        {
+          checkOn: CheckOn.MetricValue,
+          filterType: FilterType.GreaterThan,
+          value: 90,
+        },
+      ]),
+      affectedResources: [
+        { daemon: "osd.3", metricValue: 0 },
+        { daemon: "osd.4", metricValue: 1 },
+      ],
+    });
+
+    expect(context).toContain("| `osd.4` | - | - | **1** |");
+    expect(context).not.toContain("osd.3");
+  });
+});
+
+/*
+ * REGRESSION: buildKubernetesRootCauseAnalysis routed POD-scoped metrics
+ * into the NODE branches.
+ *
+ * The CPU branch matched any name containing both "cpu" and
+ * "utilization", so `k8s.pod.cpu.utilization` and
+ * `k8s.pod.cpu_limit_utilization` were answered with "Node CPU
+ * utilization has exceeded the configured threshold" plus
+ * "consider scaling the cluster" — contradicting the pod-limit template's
+ * own description and naming a node for a pod-scoped alert. The memory
+ * branch did the same for "memory" + "usage".
+ *
+ * Also: the pod-Pending branch was gated on
+ * `breakdown.attributes["k8s.pod.phase"] === "Pending"`, an UNPREFIXED key
+ * for an attribute nothing in the agent emits (the phase is the metric's
+ * VALUE), so the branch never ran at all.
+ */
+describe("MonitorCriteriaEvaluator - Kubernetes root cause analysis scoping", () => {
+  const NODE_CPU_TEXT: string =
+    "Node CPU utilization has exceeded the configured threshold.";
+  const NODE_MEMORY_TEXT: string =
+    "Node memory utilization has exceeded the configured threshold.";
+
+  function analyse(input: {
+    metricName: string;
+    attributes?: Record<string, string>;
+    topResource?: KubernetesAffectedResource;
+  }): string | null {
+    const topResource: KubernetesAffectedResource = input.topResource || {
+      podName: "web-7d9f",
+      nodeName: "node-1",
+      metricValue: 93.4,
+    };
+
+    return Evaluator.buildKubernetesRootCauseAnalysis({
+      breakdown: {
+        clusterName: "prod",
+        metricName: input.metricName,
+        metricFriendlyName: "Friendly Name",
+        affectedResources: [topResource],
+        attributes: input.attributes || {},
+      },
+      topResource,
+    });
+  }
+
+  test("k8s.node.cpu.utilization still gets the node CPU guidance", () => {
+    const analysis: string | null = analyse({
+      metricName: "k8s.node.cpu.utilization",
+    });
+
+    expect(analysis).toContain(NODE_CPU_TEXT);
+    expect(analysis).toContain("consider scaling the cluster");
+  });
+
+  test("a non-canonical node cpu utilization metric still gets the node branch", () => {
+    const analysis: string | null = analyse({
+      metricName: "k8s.node.cpu_limit_utilization",
+    });
+
+    expect(analysis).toContain(NODE_CPU_TEXT);
+  });
+
+  test("k8s.pod.cpu.utilization is NOT answered with node CPU advice", () => {
+    const analysis: string | null = analyse({
+      metricName: "k8s.pod.cpu.utilization",
+    });
+
+    expect(analysis).not.toContain(NODE_CPU_TEXT);
+    expect(analysis).not.toContain("consider scaling the cluster");
+    expect(analysis).toContain("`k8s.pod.cpu.utilization`");
+    expect(analysis).toContain("Most affected pod: `web-7d9f`");
+  });
+
+  test("k8s.pod.cpu_limit_utilization is NOT answered with node CPU advice", () => {
+    const analysis: string | null = analyse({
+      metricName: "k8s.pod.cpu_limit_utilization",
+    });
+
+    expect(analysis).not.toContain(NODE_CPU_TEXT);
+    expect(analysis).toContain("`k8s.pod.cpu_limit_utilization`");
+  });
+
+  test("k8s.node.memory.usage still gets the node memory guidance", () => {
+    const analysis: string | null = analyse({
+      metricName: "k8s.node.memory.usage",
+    });
+
+    expect(analysis).toContain(NODE_MEMORY_TEXT);
+  });
+
+  test("k8s.pod.memory_limit_utilization is NOT answered with node memory advice", () => {
+    const analysis: string | null = analyse({
+      metricName: "k8s.pod.memory_limit_utilization",
+    });
+
+    expect(analysis).not.toContain(NODE_MEMORY_TEXT);
+    expect(analysis).toContain("`k8s.pod.memory_limit_utilization`");
+  });
+
+  test("k8s.pod.memory.usage is NOT answered with node memory advice", () => {
+    const analysis: string | null = analyse({
+      metricName: "k8s.pod.memory.usage",
+    });
+
+    expect(analysis).not.toContain(NODE_MEMORY_TEXT);
+    expect(analysis).toContain("`k8s.pod.memory.usage`");
+  });
+
+  test("k8s.pod.phase gets the Pending guidance with an EMPTY attribute map", () => {
+    /*
+     * The old gate required breakdown.attributes["k8s.pod.phase"] to be
+     * "Pending". Nothing ever sets it — the breakdown attributes are the
+     * query's `resource.`-prefixed map — so this assertion fails on the
+     * pre-fix code.
+     */
+    const analysis: string | null = analyse({
+      metricName: "k8s.pod.phase",
+      attributes: {},
+    });
+
+    expect(analysis).toContain(
+      "Pods are stuck in Pending phase and unable to be scheduled.",
+    );
+    expect(analysis).toContain("kubectl describe pod web-7d9f");
+  });
+
+  test("k8s.pod.phase is not swallowed by a resource-prefixed attribute map", () => {
+    const analysis: string | null = analyse({
+      metricName: "k8s.pod.phase",
+      attributes: { "resource.k8s.cluster.name": "prod" },
+    });
+
+    expect(analysis).toContain("Pods are stuck in Pending phase");
   });
 });

@@ -19,13 +19,46 @@ export const ROLLUP_SWEEP_LOCK_NAMESPACE: string = "Workers.Cron";
 /*
  * The FIRST BURST_THRESHOLD rollup-eligible owner emails for one
  * (project, user, address, category) inside BURST_WINDOW_MINUTES are sent
- * immediately; the next one and everything after it is coalesced. Four is
- * chosen so one incident's whole normal lifecycle (created -> acknowledged ->
- * resolved) plus one more event stays immediate; the fifth event in ten
- * minutes is where a human starts noticing.
+ * immediately; the next one and everything after it is coalesced.
+ *
+ * THE WINDOW IS THIRTY MINUTES BECAUSE TEN CANNOT SEE A SLOW FLAP.
+ *
+ * The flood this feature exists for is not a spike. The recommendation
+ * monitors fixed in RecommendationCriteriaBuilder.ts produced 39 owner emails
+ * - 19 open, 20 resolve - from ONE monitor in under two hours: about 3.3
+ * items per ten minutes. Both event types are RollupCategory.Alerts, so they
+ * share one counter, and 3.3 sits under a trip point of four. A rate like
+ * that is invisible to a ten-minute window and obvious to a thirty-minute
+ * one, which sees the same flap as about ten items and coalesces from the
+ * fifth onwards.
+ *
+ * Stated precisely, because the number deserves it: rollup did not exist
+ * while that cluster was flapping. This is what a ten-minute window WOULD
+ * have missed, not a throttle that was observed to fail. The flapping itself
+ * is fixed at source; this is the second line of defence, and it is worth
+ * sizing against the case that actually got through.
+ *
+ * WHAT IT COSTS. A row is written for every eligible email, deferred ones
+ * included, so the counter tracks the true arrival rate and does not decay
+ * while a bucket is being coalesced. Tripling the window therefore triples
+ * how long the throttle REMEMBERS: a project with three separate incidents in
+ * half an hour now has the third one's CREATION email deferred by
+ * FLUSH_AFTER_MINUTES, not merely the tail of the second. That is the real
+ * trade, and it is reversible with the same one-line edit.
+ *
+ * Four survives the change because it still covers one incident's whole
+ * normal lifecycle (created -> acknowledged -> resolved) plus one more event.
+ * What it no longer promises is headroom for a SECOND unrelated incident in
+ * the same window; that is the cost above, and it is deliberate.
+ *
+ * Nothing is dropped - deferred items arrive together FLUSH_AFTER_MINUTES
+ * later - and no page is affected, because escalation notifications call
+ * MailService directly from UserNotificationRuleService and never reach this
+ * code at all. The per-user opt-out EmailRollupWriter consults still wins
+ * over both numbers.
  */
 export const BURST_THRESHOLD: number = 4;
-export const BURST_WINDOW_MINUTES: number = 10;
+export const BURST_WINDOW_MINUTES: number = 30;
 
 /*
  * A deferred item is due once it is this old. Also the claim-epoch length,

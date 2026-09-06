@@ -202,7 +202,7 @@ const MonitorRecommendationCreateSideOver: FunctionComponent<ComponentProps> = (
     count: number;
     options: Array<MonitorRecommendationSeverityOption>;
     severityMap: MonitorRecommendationSeverityMap;
-    onChange: (severityId: ObjectID | undefined) => void;
+    onChange: (severityId: ObjectID) => void;
   }) => ReactElement;
 
   /*
@@ -216,7 +216,7 @@ const MonitorRecommendationCreateSideOver: FunctionComponent<ComponentProps> = (
     count: number;
     options: Array<MonitorRecommendationSeverityOption>;
     severityMap: MonitorRecommendationSeverityMap;
-    onChange: (severityId: ObjectID | undefined) => void;
+    onChange: (severityId: ObjectID) => void;
   }): ReactElement => {
     const dropdownOptions: Array<DropdownOption> = toDropdownOptions(
       data.options,
@@ -248,13 +248,30 @@ const MonitorRecommendationCreateSideOver: FunctionComponent<ComponentProps> = (
             }
             options={dropdownOptions}
             onChange={(value: DropdownValue | Array<DropdownValue> | null) => {
-              data.onChange(
-                value && !Array.isArray(value)
-                  ? new ObjectID(value.toString())
-                  : undefined,
-              );
+              /*
+               * Clearing is IGNORED, not written through as `undefined`.
+               *
+               * `Dropdown` hardcodes `isClearable`, and an unmapped severity
+               * is not "keep the template's own": the templates carry no
+               * severity of their own, so
+               * `MonitorRecommendationUtil.applyToCriteriaAlert` skips the
+               * assignment and what survives is `args.defaultAlertSeverityId`
+               * — which `MonitorRecommendations` fills from
+               * `alertSeverityList.data[0]`, the project's MOST severe row.
+               * Clearing "Warning" therefore paged HARDER than leaving it
+               * alone, which is the exact opposite of what the old
+               * "Keep the template's severity" placeholder promised. There is
+               * also no valid end state with no severity:
+               * `MonitorCriteriaInstance.getValidationError` rejects a
+               * populated incident that has none.
+               */
+              if (!value || Array.isArray(value)) {
+                return;
+              }
+
+              data.onChange(new ObjectID(value.toString()));
             }}
-            placeholder="Keep the template's severity"
+            placeholder="Select a severity"
           />
         </div>
       </div>
@@ -392,7 +409,7 @@ const MonitorRecommendationCreateSideOver: FunctionComponent<ComponentProps> = (
                   count: criticalCount,
                   options: props.alertSeverityOptions,
                   severityMap: alertSeverityMap,
-                  onChange: (severityId: ObjectID | undefined) => {
+                  onChange: (severityId: ObjectID) => {
                     setAlertSeverityMap({
                       ...alertSeverityMap,
                       Critical: severityId,
@@ -404,7 +421,7 @@ const MonitorRecommendationCreateSideOver: FunctionComponent<ComponentProps> = (
                   count: warningCount,
                   options: props.alertSeverityOptions,
                   severityMap: alertSeverityMap,
-                  onChange: (severityId: ObjectID | undefined) => {
+                  onChange: (severityId: ObjectID) => {
                     setAlertSeverityMap({
                       ...alertSeverityMap,
                       Warning: severityId,
@@ -426,7 +443,7 @@ const MonitorRecommendationCreateSideOver: FunctionComponent<ComponentProps> = (
                   count: criticalCount,
                   options: props.incidentSeverityOptions,
                   severityMap: incidentSeverityMap,
-                  onChange: (severityId: ObjectID | undefined) => {
+                  onChange: (severityId: ObjectID) => {
                     setIncidentSeverityMap({
                       ...incidentSeverityMap,
                       Critical: severityId,
@@ -438,7 +455,7 @@ const MonitorRecommendationCreateSideOver: FunctionComponent<ComponentProps> = (
                   count: warningCount,
                   options: props.incidentSeverityOptions,
                   severityMap: incidentSeverityMap,
-                  onChange: (severityId: ObjectID | undefined) => {
+                  onChange: (severityId: ObjectID) => {
                     setIncidentSeverityMap({
                       ...incidentSeverityMap,
                       Warning: severityId,

@@ -694,7 +694,31 @@ export default class CompareCriteria {
       message += ` over the last ${data.criteriaFilter.evaluateOverTimeOptions.timeValueInMinutes} minutes`;
     }
 
-    const unitSuffix: string = data.unit ? ` ${data.unit}` : "";
+    /*
+     * Suppress the units that read as noise — or as a wrong number —
+     * next to a value. OTel's dimensionless "1" marks ratio metrics
+     * whose samples are fractions in [0, 1]; rendering "0.06 1" is both
+     * ugly and misleading (it is not 1% — it is 6%), and a CLS breach
+     * read "is 0.31 1 which is greater than or equal to 0.25 1". UCUM
+     * annotation-only units ("{cpu}", "{packets}", "{errors}") are
+     * descriptive braces, not a unit a reader should be shown. Every
+     * real unit passes through unchanged, so "%" stays "%" and "ms"
+     * stays "ms".
+     *
+     * The dashboard side already applies the "1" half of this rule in
+     * MonitorCriteriaObservationBuilder.normalizeDisplayUnit, and
+     * ValueFormatter applies both halves when it formats a value. The
+     * email path never picked either up, so the same evaluation rendered
+     * worse in the alert than on the dashboard.
+     */
+    const trimmedUnit: string = (data.unit || "").trim();
+    const annotationOnlyUnitPattern: RegExp = /^\{[^{}]*\}$/;
+    const unitSuffix: string =
+      trimmedUnit &&
+      trimmedUnit !== "1" &&
+      !annotationOnlyUnitPattern.test(trimmedUnit)
+        ? ` ${trimmedUnit}`
+        : "";
 
     if (
       data.criteriaFilter.filterType !== FilterType.True &&

@@ -1,2 +1,20 @@
 {{> TitleBlock title="How do I unsubscribe from this email?"}}
+{{!--
+  The link, when the sending worker knows how to build it.
+
+  This partial is included by the alert, incident, monitor, probe and
+  status-page owner families. Only the workers that set
+  `notificationSettingsLink` get the link; every other template keeps today's
+  four-level menu-path sentence until its worker is updated, which is what
+  makes this safe to land one producer at a time.
+
+  The page is behind authentication, so this is not RFC 8058 one-click
+  unsubscribe - it is one hop instead of a four-hop menu path the reader has
+  to remember. No List-Unsubscribe header is claimed for it.
+--}}
+{{#if notificationSettingsLink}}
+{{> InfoBlock info="Change or turn off these notifications in your OneUptime notification settings:"}}
+{{> InfoBlock info=notificationSettingsLink}}
+{{else}}
 {{> InfoBlock info="You can go to OneUptime Dashboard > More > User Settings > Notification Settings to unsubscribe from this email."}}
+{{/if}}

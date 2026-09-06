@@ -117,6 +117,7 @@ export function buildPodmanOnlineCriteriaInstance(args: {
   value: number;
   recoveryValue?: number | undefined;
   marginFraction?: number | undefined;
+  isBinaryMetric?: boolean | undefined;
   metricAggregationType?: EvaluateOverTimeType | undefined;
 }): MonitorCriteriaInstance {
   return buildHealthyCriteriaInstance(args);
@@ -169,7 +170,7 @@ const highCpuTemplate: PodmanAlertTemplate = {
   id: "podman-high-cpu",
   name: "High Container CPU Usage",
   description:
-    "Alert when container CPU usage exceeds 80% sustained. One alert per container.",
+    "Alert when a container averages more than 80% of one CPU core for five minutes. 100% is one full core, so a container spread across several cores reads well above 100. One alert per container.",
   category: "Resource",
   severity: "Warning",
   getMonitorStep: (args: PodmanAlertTemplateArgs): MonitorStep => {
@@ -182,11 +183,17 @@ const highCpuTemplate: PodmanAlertTemplate = {
         metricAlias,
         rollingTime: RollingTime.Past5Minutes,
         /*
-         * Max WITHIN each container's series: any scrape in the window over
-         * the threshold trips that container. Grouping by container name
-         * already keeps a hot container from being diluted by idle ones.
+         * Avg WITHIN each container's series, matching this metric's
+         * documented default in PodmanMetricCatalog and the sibling Docker
+         * Swarm template on the identical metric and threshold.
+         * container.cpu.utilization is already a per-container percentage,
+         * so the per-minute average IS the sustained utilization. GROUPING
+         * by container name — not Max — is what keeps a hot container from
+         * being diluted by idle ones, so Max buys nothing here and only
+         * makes a 40-second burst read as a full minute above the
+         * threshold, which contradicts the word "sustained" in the copy.
          */
-        aggregationType: MetricsAggregationType.Max,
+        aggregationType: MetricsAggregationType.Avg,
         groupByAttributeKey: "resource.container.name",
       }),
       offlineCriteriaInstance: buildPodmanOfflineCriteriaInstance({
@@ -197,11 +204,11 @@ const highCpuTemplate: PodmanAlertTemplate = {
         metricAlias,
         filterType: FilterType.GreaterThan,
         value: 80,
-        incidentTitle: `[Podman] High CPU Usage (>80%) - ${args.monitorName}`,
-        incidentDescription: `A Podman container's CPU usage has exceeded 80%. Sustained high CPU usage can cause performance degradation and throttling. Check the root cause for the specific container and host details.`,
-        criteriaName: "High CPU - Usage > 80%",
+        incidentTitle: `[Podman] High Container CPU (over 80% of one core) - ${args.monitorName}`,
+        incidentDescription: `A Podman container has averaged more than 80% of one CPU core for five minutes. container.cpu.utilization is the same figure podman stats prints: 100% is one full core, so this threshold means "most of a core", not "near the container's CPU limit" — a container given several cores reads well above 100 while perfectly healthy. See the resources affected on this alert for which container it is.`,
+        criteriaName: "High CPU - Over 80% of one core (5 min)",
         criteriaDescription:
-          "Triggers when any container's CPU usage exceeds 80% over the monitoring window.",
+          "Triggers when a container's CPU utilization averages over 80 for every minute of the window. The scale is percent of ONE core (100 = one full core), not percent of the container's CPU limit.",
       }),
       onlineCriteriaInstance: buildPodmanOnlineCriteriaInstance({
         onlineMonitorStatusId: args.onlineMonitorStatusId,
@@ -217,7 +224,7 @@ const highMemoryTemplate: PodmanAlertTemplate = {
   id: "podman-high-memory",
   name: "High Container Memory Usage",
   description:
-    "Alert when container memory usage exceeds 85% of its limit. One alert per container.",
+    "Alert when a container averages more than 85% memory usage for five minutes — of its --memory limit where one is set, of host memory where it is not. One alert per container.",
   category: "Resource",
   severity: "Warning",
   getMonitorStep: (args: PodmanAlertTemplateArgs): MonitorStep => {
@@ -230,11 +237,15 @@ const highMemoryTemplate: PodmanAlertTemplate = {
         metricAlias,
         rollingTime: RollingTime.Past5Minutes,
         /*
-         * Max WITHIN each container's series: any scrape in the window over
-         * the limit trips that container. Grouping by container name already
-         * keeps a container at its limit from being diluted by idle ones.
+         * Avg WITHIN each container's series, matching this metric's
+         * documented default in PodmanMetricCatalog and the sibling Docker
+         * Swarm template on the identical metric and threshold.
+         * container.memory.percent is already a true percentage per
+         * container, so the per-minute average is the sustained reading;
+         * grouping by container name — not Max — is what keeps a container
+         * at its limit from being diluted by idle ones.
          */
-        aggregationType: MetricsAggregationType.Max,
+        aggregationType: MetricsAggregationType.Avg,
         groupByAttributeKey: "resource.container.name",
       }),
       offlineCriteriaInstance: buildPodmanOfflineCriteriaInstance({
@@ -245,11 +256,11 @@ const highMemoryTemplate: PodmanAlertTemplate = {
         metricAlias,
         filterType: FilterType.GreaterThan,
         value: 85,
-        incidentTitle: `[Podman] High Memory Usage (>85%) - ${args.monitorName}`,
-        incidentDescription: `A Podman container's memory usage has exceeded 85% of its limit. High memory usage can lead to OOM kills and container restarts. Check the root cause for the specific container and host details.`,
+        incidentTitle: `[Podman] High Container Memory (>85%) - ${args.monitorName}`,
+        incidentDescription: `A Podman container has averaged more than 85% memory usage for five minutes. container.memory.percent is measured against the container's memory limit where one is set with --memory, and against the host's total memory where it is not — so on a container with a limit this is close to an OOM kill, and on one without a limit it means the container is consuming most of the host. See the resources affected on this alert for which container it is.`,
         criteriaName: "High Memory - Usage > 85%",
         criteriaDescription:
-          "Triggers when any container's memory usage exceeds 85% over the monitoring window.",
+          "Triggers when a container's memory usage averages over 85% for every minute of the window — of its memory limit where one is set, of host memory where it is not.",
       }),
       onlineCriteriaInstance: buildPodmanOnlineCriteriaInstance({
         onlineMonitorStatusId: args.onlineMonitorStatusId,
@@ -263,9 +274,9 @@ const highMemoryTemplate: PodmanAlertTemplate = {
 
 const containerRestartLoopTemplate: PodmanAlertTemplate = {
   id: "podman-restart-loop",
-  name: "Container Restart Loop",
+  name: "High Container Restart Count",
   description:
-    "Alert when a container has restarted more than 5 times, indicating a crash loop. One alert per container.",
+    "Alert when a container's restart count passes 5. The count is a running total kept by the container engine, not a count of restarts inside the monitoring window. One alert per container.",
   category: "Container",
   severity: "Critical",
   getMonitorStep: (args: PodmanAlertTemplateArgs): MonitorStep => {
@@ -277,53 +288,17 @@ const containerRestartLoopTemplate: PodmanAlertTemplate = {
         metricName: "container.restarts",
         metricAlias,
         rollingTime: RollingTime.Past5Minutes,
-        aggregationType: MetricsAggregationType.Max,
-        groupByAttributeKey: "resource.container.name",
-      }),
-      offlineCriteriaInstance: buildPodmanOfflineCriteriaInstance({
-        offlineMonitorStatusId: args.offlineMonitorStatusId,
-        incidentSeverityId: args.defaultIncidentSeverityId,
-        alertSeverityId: args.defaultAlertSeverityId,
-        monitorName: args.monitorName,
-        metricAlias,
-        filterType: FilterType.GreaterThan,
-        value: 5,
-        incidentTitle: `[Podman] Container Restart Loop Detected - ${args.monitorName}`,
-        incidentDescription: `A Podman container is repeatedly crashing and restarting. The container restart count has exceeded 5. This indicates a crash loop that needs immediate attention. Check the root cause for the specific container, exit code, and logs.`,
-        criteriaName: "Restart Loop - Restarts > 5",
-        criteriaDescription:
-          "Triggers when any container restart count exceeds 5 in the monitoring window.",
-      }),
-      onlineCriteriaInstance: buildPodmanOnlineCriteriaInstance({
-        onlineMonitorStatusId: args.onlineMonitorStatusId,
-        metricAlias,
-        filterType: FilterType.LessThanOrEqualTo,
-        value: 5,
-      }),
-    });
-  },
-};
-
-const highCpuThrottlingTemplate: PodmanAlertTemplate = {
-  id: "podman-cpu-throttling",
-  name: "Container CPU Throttling",
-  description:
-    "Alert when a container is being CPU-throttled, indicating it needs more CPU resources. One alert per container.",
-  category: "Resource",
-  severity: "Warning",
-  getMonitorStep: (args: PodmanAlertTemplateArgs): MonitorStep => {
-    const metricAlias: string = "cpu_throttled";
-
-    return buildPodmanMonitorStep({
-      podmanMonitor: buildPodmanMonitorConfig({
-        hostIdentifier: args.hostIdentifier,
-        metricName: "container.cpu.throttling_data.throttled_time",
-        metricAlias,
-        rollingTime: RollingTime.Past5Minutes,
         /*
-         * Max WITHIN each container's series, so throttled time is never
-         * summed across containers — grouping by container name attributes
-         * the throttling to the container that actually suffered it.
+         * container.restarts is the engine's RestartCount for the container
+         * (contrib docker_stats receiver, enabled in
+         * PodmanAgent/otel-collector-config.yaml) — a monotonic running
+         * total, NOT a per-window count. Nothing in the alerting path turns
+         * a cumulative counter into a delta: ingest stores the raw value and
+         * records temporality/monotonicity only as catalog metadata for the
+         * dashboard's rate-view hint, and the worker merely buckets values
+         * per minute before aggregating. So Max over this window is simply
+         * "the current running total" — which is what the copy below says,
+         * and what it must keep saying.
          */
         aggregationType: MetricsAggregationType.Max,
         groupByAttributeKey: "resource.container.name",
@@ -335,22 +310,46 @@ const highCpuThrottlingTemplate: PodmanAlertTemplate = {
         monitorName: args.monitorName,
         metricAlias,
         filterType: FilterType.GreaterThan,
-        value: 0,
-        incidentTitle: `[Podman] CPU Throttling Detected - ${args.monitorName}`,
-        incidentDescription: `A Podman container is being CPU-throttled. This means the container is hitting its CPU limit and performance is degraded. Consider increasing the CPU limit or optimizing the application.`,
-        criteriaName: "CPU Throttling - Throttled Time > 0",
+        value: 5,
+        incidentTitle: `[Podman] Container Restart Count Above 5 - ${args.monitorName}`,
+        incidentDescription: `A Podman container has restarted more than 5 times since the container engine last reset its restart count. That count is a running total, so this is NOT five restarts in the last five minutes — check the container's exit code and logs to see whether it is crash-looping right now. The count, and therefore this alert, clears when the container is recreated. The affected container is named in the resources affected on this alert.`,
+        criteriaName: "Restart Count - Restarts > 5",
         criteriaDescription:
-          "Triggers when any container reports CPU throttling.",
+          "Triggers when a container's running restart total exceeds 5. The total is cumulative rather than per-window, so this criteria stays met until the container is recreated.",
       }),
       onlineCriteriaInstance: buildPodmanOnlineCriteriaInstance({
         onlineMonitorStatusId: args.onlineMonitorStatusId,
         metricAlias,
-        filterType: FilterType.EqualTo,
-        value: 0,
+        filterType: FilterType.LessThanOrEqualTo,
+        value: 5,
       }),
     });
   },
 };
+
+/*
+ * There is deliberately no CPU-throttling template.
+ *
+ * The only throttling signals the agent enables
+ * (container.cpu.throttling_data.throttled_time / .throttled_periods, see
+ * PodmanAgent/otel-collector-config.yaml) are CUMULATIVE monotonic
+ * counters — lifetime totals for the container, as PodmanMetricCatalog
+ * itself documents ("Total time the container CPU has been throttled",
+ * unit ns). Nothing between ingest and the criteria evaluator turns a
+ * cumulative counter into a delta or a rate: the collector pipeline has no
+ * cumulativetodelta processor, OtelMetricsIngestService stores
+ * aggregationTemporality/isMonotonic only so the browser can auto-suggest
+ * rate views, AggregationType has no rate/increase member, and
+ * CompareCriteria.reduceWindow offers only Average/Sum/Max/Min.
+ *
+ * So "throttled_time > 0" means "this container has been throttled at some
+ * point since it was created" — true forever once true, for any container
+ * with a CPU quota that has ever burst. It fires and the "= 0" recovery is
+ * unreachable, leaving a permanently open alert that only a container
+ * recreation can clear. getRecoveryThreshold() returns undefined at a
+ * threshold of 0, so the recovery dead band does not apply here either.
+ * Reinstate this template on a windowed delta, not on the raw counter.
+ */
 
 const highProcessCountTemplate: PodmanAlertTemplate = {
   id: "podman-high-pids",
@@ -380,7 +379,7 @@ const highProcessCountTemplate: PodmanAlertTemplate = {
         filterType: FilterType.GreaterThan,
         value: 500,
         incidentTitle: `[Podman] High Process Count (>500) - ${args.monitorName}`,
-        incidentDescription: `A Podman container has an unusually high number of processes (>500). This may indicate a fork bomb, resource leak, or misconfigured application. Check the container for runaway processes.`,
+        incidentDescription: `A Podman container has more than 500 processes. This may indicate a fork bomb, a thread or connection leak, or a misconfigured application. The affected container is named in the resources affected on this alert; inspect it for runaway processes.`,
         criteriaName: "High PIDs - Count > 500",
         criteriaDescription:
           "Triggers when container process count exceeds 500.",
@@ -397,9 +396,9 @@ const highProcessCountTemplate: PodmanAlertTemplate = {
 
 const containerUptimeTemplate: PodmanAlertTemplate = {
   id: "podman-container-down",
-  name: "Container Down (Low Uptime)",
+  name: "Container Restarted (Low Uptime)",
   description:
-    "Alert when a container's uptime drops to zero, indicating it has stopped or crashed. One alert per container.",
+    "Alert when a container's uptime resets, meaning it restarted, crashed or was redeployed in the last two minutes. One alert per container.",
   category: "Container",
   severity: "Critical",
   getMonitorStep: (args: PodmanAlertTemplateArgs): MonitorStep => {
@@ -411,6 +410,12 @@ const containerUptimeTemplate: PodmanAlertTemplate = {
         metricName: "container.uptime",
         metricAlias,
         rollingTime: RollingTime.Past1Minute,
+        /*
+         * Min WITHIN each container's series: the evaluator buckets raw
+         * samples per container per minute and reduces each bucket with this
+         * aggregation, so the low sample taken just after a restart survives
+         * instead of being averaged away by the scrapes around it.
+         */
         aggregationType: MetricsAggregationType.Min,
         groupByAttributeKey: "resource.container.name",
       }),
@@ -420,18 +425,34 @@ const containerUptimeTemplate: PodmanAlertTemplate = {
         alertSeverityId: args.defaultAlertSeverityId,
         monitorName: args.monitorName,
         metricAlias,
-        filterType: FilterType.EqualTo,
-        value: 0,
-        incidentTitle: `[Podman] Container Down - ${args.monitorName}`,
-        incidentDescription: `A Podman container has stopped running. The container uptime is zero, indicating it has crashed, been stopped, or been removed. Check the container status and logs for details.`,
-        criteriaName: "Container Down - Uptime = 0",
-        criteriaDescription: "Triggers when container uptime drops to zero.",
+        /*
+         * NOT "= 0". container.uptime is seconds since the container
+         * started, and the docker_stats receiver only scrapes RUNNING
+         * containers: a stopped container emits no row at all rather than a
+         * zero, and a running one is never scraped at the exact instant it
+         * started. "= 0" therefore never matched, which made this template
+         * inert.
+         *
+         * A low uptime is the signal this metric can actually carry. Two
+         * minutes is deliberately wider than the 30s scrape interval and the
+         * 60s evaluation interval, so the once-a-minute evaluator sees the
+         * whole Past1Minute window under the threshold whatever the phase of
+         * the scrapes; a 60s threshold on a 60s window can miss a restart
+         * entirely.
+         */
+        filterType: FilterType.LessThan,
+        value: 120,
+        incidentTitle: `[Podman] Container Restarted (uptime < 2m) - ${args.monitorName}`,
+        incidentDescription: `A Podman container's uptime counter has reset, so it crashed, was stopped, or was redeployed within the last two minutes. The affected container is named in the resources affected on this alert; check its exit code and logs. Note that a container which stops and stays stopped reports no metrics at all, so this alert detects restarts rather than a permanent shutdown, and a container that is meant to run for less than two minutes will stay in this state for its whole life.`,
+        criteriaName: "Container Restarted - Uptime < 120s",
+        criteriaDescription:
+          "Triggers when a container's uptime stays under 120 seconds for the whole window, which means it started or restarted within the last two minutes.",
       }),
       onlineCriteriaInstance: buildPodmanOnlineCriteriaInstance({
         onlineMonitorStatusId: args.onlineMonitorStatusId,
         metricAlias,
-        filterType: FilterType.GreaterThan,
-        value: 0,
+        filterType: FilterType.GreaterThanOrEqualTo,
+        value: 120,
       }),
     });
   },
@@ -442,7 +463,6 @@ export function getAllPodmanAlertTemplates(): Array<PodmanAlertTemplate> {
     highCpuTemplate,
     highMemoryTemplate,
     containerRestartLoopTemplate,
-    highCpuThrottlingTemplate,
     highProcessCountTemplate,
     containerUptimeTemplate,
   ];

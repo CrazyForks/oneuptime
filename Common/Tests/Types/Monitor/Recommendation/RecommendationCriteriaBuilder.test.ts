@@ -143,6 +143,70 @@ describe("RecommendationCriteriaBuilder", () => {
       expect(recoveryValue).toBeGreaterThan(-100);
     });
 
+    /*
+     * A regression the dead band itself introduced, caught after it shipped.
+     *
+     * A boolean signal is conventionally written as a threshold of ONE —
+     * "up < 1" fires, "up >= 1" recovers — so the `value === 0` carve-out
+     * below does not catch it. Widening by 10% put recovery at ">= 1.1",
+     * which a gauge that only ever emits 0 or 1 can never satisfy: the
+     * healthy criteria never matched, and a device that came back up never
+     * produced an Online transition. It affected iot-device-offline,
+     * pve-node-offline and pve-guest-down.
+     */
+    test("a binary metric gets no dead band, so 0/1 gauges can recover at 1", () => {
+      expect(
+        firstFilter(
+          buildHealthy({
+            filterType: FilterType.GreaterThanOrEqualTo,
+            value: 1,
+            isBinaryMetric: true,
+          }),
+        ).value,
+      ).toBe(1);
+    });
+
+    test("without the flag, a threshold of 1 is widened to an unreachable 1.1", () => {
+      // Pins the mechanism, so the carve-out cannot be quietly removed.
+      expect(
+        firstFilter(
+          buildHealthy({
+            filterType: FilterType.GreaterThanOrEqualTo,
+            value: 1,
+          }),
+        ).value,
+      ).toBe(1.1);
+    });
+
+    test("the binary flag reaches additional filters too", () => {
+      const instance: MonitorCriteriaInstance = buildHealthy({
+        filterType: FilterType.GreaterThanOrEqualTo,
+        value: 1,
+        isBinaryMetric: true,
+        additionalFilters: [
+          {
+            metricAlias: "other_up",
+            filterType: FilterType.GreaterThanOrEqualTo,
+            value: 1,
+          },
+        ],
+      });
+
+      for (const filter of instance.data?.filters as Array<CriteriaFilter>) {
+        expect(filter.value).toBe(1);
+      }
+    });
+
+    test("getRecoveryThreshold reports no band for a binary metric", () => {
+      expect(
+        getRecoveryThreshold({
+          filterType: FilterType.LessThan,
+          value: 1,
+          isBinaryMetric: true,
+        }),
+      ).toBeUndefined();
+    });
+
     test("a zero threshold gets no dead band, so count criteria still recover at zero", () => {
       expect(
         firstFilter(buildHealthy({ filterType: FilterType.EqualTo, value: 0 }))
