@@ -1,4 +1,5 @@
 import { BASE_URL } from "../../../Config";
+import DataSourceEgressGuard from "Common/Server/Utils/DataSource/EgressGuard";
 import { APIResponse, Cookie, Page, expect } from "@playwright/test";
 import URL from "Common/Types/API/URL";
 import { ApiResult, sendWithRetry } from "./ApiRequest";
@@ -348,6 +349,47 @@ export const downUrl: DownUrlFunction = (data: {
 }): string => {
   return buildUrl(`/api/e2e-monitor-down-${data.label}-${data.unique}`);
 };
+
+type DescribeProbeEgressRefusalFunction = (
+  url: string,
+) => Promise<string | null>;
+
+/*
+ * Would a bundled probe be ALLOWED to check this URL?
+ *
+ * Reachability and permission are different questions, and this spec only
+ * ever asked the first one. The e2e container shares the host's network
+ * exactly as the probes do, so an HTTP GET from here proves the target
+ * answers - but a probe applies DataSourceEgressGuard to the resolved
+ * address before it opens a socket, and that guard refuses loopback,
+ * link-local and the cloud metadata ranges in EVERY deployment. Probes
+ * shipped with a deployment auto-register with REGISTER_PROBE_KEY, which
+ * also pins PROBE_ALLOW_PRIVATE_NETWORK_MONITORS off, so private ranges are
+ * refused too.
+ *
+ * A target the guard refuses looks exactly like a target that is down: the
+ * monitor goes Offline for the outage half of this spec (passing for the
+ * wrong reason) and can then never come back. That is what "timed out
+ * waiting for the monitor to recover to operational" meant.
+ *
+ * The real guard is called rather than a copy of its rules, so this answer
+ * cannot drift from the one the probe will give.
+ */
+export const describeProbeEgressRefusal: DescribeProbeEgressRefusalFunction =
+  async (url: string): Promise<string | null> => {
+    try {
+      await DataSourceEgressGuard.assertUrlAllowed(url, {
+        /* What a probe holding a REGISTER_PROBE_KEY enforces. */
+        blockPrivateAddresses: true,
+        targetLabel: "Monitor target",
+        includeResolvedAddressInError: false,
+      });
+
+      return null;
+    } catch (error) {
+      return (error as Error).message;
+    }
+  };
 
 type AssertMonitorTargetsAreUsableFunction = (data: {
   page: Page;

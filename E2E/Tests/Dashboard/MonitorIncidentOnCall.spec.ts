@@ -19,6 +19,7 @@ import {
   getProjectDefaults,
   getSessionUser,
   HEALTHY_URL,
+  describeProbeEgressRefusal,
   JSONish,
   listItems,
   MonitorStepIds,
@@ -125,6 +126,11 @@ interface SharedContext {
   projectId: string;
   user: SessionUser;
   defaults: ProjectDefaults;
+  /*
+   * Why a bundled probe may not check the monitor target, or null when it
+   * may. See describeProbeEgressRefusal.
+   */
+  probeEgressRefusal: string | null;
 }
 
 interface AlertingRunResult {
@@ -143,6 +149,11 @@ test.describe("Monitor -> Incident -> On-Call -> User Alerted", () => {
       incidentSeverityId: "",
       resolvedIncidentStateId: "",
     },
+    /*
+     * Set when a bundled probe is not permitted to check HEALTHY_URL. See
+     * describeProbeEgressRefusal, and the skip it drives below.
+     */
+    probeEgressRefusal: null,
   };
 
   test.beforeAll(async ({ browser }: { browser: Browser }) => {
@@ -167,6 +178,14 @@ test.describe("Monitor -> Incident -> On-Call -> User Alerted", () => {
       page: ctx.page,
       sampleDownUrl: downUrl({ label: "precondition", unique: "check" }),
     });
+
+    /*
+     * Reachable is not the same as permitted. The two flow tests below drive
+     * a monitor a PROBE checks, and a probe applies its egress guard to the
+     * resolved address first - so on a stack whose only address is loopback
+     * they can never see the target come back up, however long they wait.
+     */
+    ctx.probeEgressRefusal = await describeProbeEgressRefusal(HEALTHY_URL);
 
     ctx.defaults = await getProjectDefaults({
       page: ctx.page,
@@ -405,6 +424,21 @@ test.describe("Monitor -> Incident -> On-Call -> User Alerted", () => {
 
   test("website monitor created in the dashboard pages the on-call user when it goes down", async () => {
     /*
+     * A probe can only monitor an address its egress guard allows, and on
+     * this stack HEALTHY_URL is loopback - refused in every deployment, and
+     * not something a monitor, a project or an operator env var can loosen.
+     * The monitor would go Offline (for the wrong reason) and never recover,
+     * which is what this spec spent eight minutes discovering before it said
+     * so. Point the stack at an address a probe may reach to run this.
+     */
+    test.skip(
+      Boolean(ctx.probeEgressRefusal),
+      `A probe is not permitted to check ${HEALTHY_URL} - the guard's own words: ` +
+        `"${ctx.probeEgressRefusal}". Reachable, but refused: every address it ` +
+        `resolves to is one DataSourceEgressGuard blocks in every deployment.`,
+    );
+
+    /*
      * Wide enough for every wait below to spend its whole budget and still
      * report the one that actually ran out, rather than the test being cut
      * off mid-wait with nothing to say.
@@ -524,6 +558,21 @@ test.describe("Monitor -> Incident -> On-Call -> User Alerted", () => {
   });
 
   test("api monitor created over the api pages the on-call user when it goes down", async () => {
+    /*
+     * A probe can only monitor an address its egress guard allows, and on
+     * this stack HEALTHY_URL is loopback - refused in every deployment, and
+     * not something a monitor, a project or an operator env var can loosen.
+     * The monitor would go Offline (for the wrong reason) and never recover,
+     * which is what this spec spent eight minutes discovering before it said
+     * so. Point the stack at an address a probe may reach to run this.
+     */
+    test.skip(
+      Boolean(ctx.probeEgressRefusal),
+      `A probe is not permitted to check ${HEALTHY_URL} - the guard's own words: ` +
+        `"${ctx.probeEgressRefusal}". Reachable, but refused: every address it ` +
+        `resolves to is one DataSourceEgressGuard blocks in every deployment.`,
+    );
+
     test.setTimeout(900000);
 
     const monitorName: string = `E2E API ${Faker.generateName().toString()}`;
