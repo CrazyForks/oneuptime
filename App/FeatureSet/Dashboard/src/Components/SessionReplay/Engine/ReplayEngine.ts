@@ -156,6 +156,11 @@ class ReplayEngineMachine implements ReplayEngine {
   private readonly headerViewport: ReplayRecordedSize | null;
 
   private readonly host: HTMLElement | null;
+  /*
+   * A build that reached the point of creating a Replayer before the stage
+   * had mounted this engine's host. See the guard in build().
+   */
+  private pendingBuild: { anchorChunkIndex: number; targetMs: number } | null;
   private container: HTMLElement | null;
 
   private readonly listeners: Set<ReplayEngineListener>;
@@ -237,6 +242,7 @@ class ReplayEngineMachine implements ReplayEngine {
     }
 
     this.container = null;
+    this.pendingBuild = null;
 
     this.listeners = new Set<ReplayEngineListener>();
     this.replayerListeners = new Set<ReplayEngineReplayerListener>();
@@ -419,11 +425,37 @@ class ReplayEngineMachine implements ReplayEngine {
     };
   }
 
+  /*
+   * True once the host div is in a document, which is the precondition
+   * rrweb's sandboxed iframe has. False before ReplayStage mounts, and
+   * again while the stage is being moved (theater mode, a remount).
+   */
+  private isHostConnected(): boolean {
+    return Boolean(this.host && this.host.isConnected);
+  }
+
   public attach(container: HTMLElement): void {
     this.container = container;
 
     if (this.host && this.host.parentElement !== container) {
       container.appendChild(this.host);
+    }
+
+    /*
+     * A build that had to wait for this. The generation is unchanged - a
+     * newer load would have cleared it - so it resumes as itself, off the
+     * loader's cache.
+     */
+    const deferred: { anchorChunkIndex: number; targetMs: number } | null =
+      this.pendingBuild;
+
+    if (deferred && this.isHostConnected()) {
+      this.pendingBuild = null;
+      void this.build(
+        deferred.anchorChunkIndex,
+        deferred.targetMs,
+        this.generation,
+      );
     }
   }
 
@@ -452,6 +484,7 @@ class ReplayEngineMachine implements ReplayEngine {
       this.segment = null;
     }
 
+    this.pendingBuild = null;
     this.detach();
     this.loader.dispose();
     this.publish();
@@ -477,6 +510,8 @@ class ReplayEngineMachine implements ReplayEngine {
     this.generation += 1;
     const generation: number = this.generation;
 
+    /* Superseded: this load replaces whatever attach() was going to resume. */
+    this.pendingBuild = null;
     this.pendingGap = null;
     this.feedGoal = null;
     this.releaseExtendLoop();
@@ -598,6 +633,38 @@ class ReplayEngineMachine implements ReplayEngine {
             "This recording is too short to play. The only footage that survived is a single frame, which the player cannot render.",
           retryable: false,
         });
+        return;
+      }
+
+      /*
+       * rrweb builds its stage inside a sandboxed iframe, and
+       * createSandboxedIframe() throws outright if the root it is given is
+       * not in a document:
+       *
+       *   "rrweb-snapshot.createSandboxedIframe() requires root to be
+       *    connected to a document before creating a sandboxed iframe"
+       *
+       * The host div is created in this constructor and only enters the
+       * page when ReplayStage's mount effect calls attach(). Loading starts
+       * as soon as the manifest lands, so whether the host is in the page
+       * by now is a race between the network and React's commit - and on a
+       * fast local read the network wins. The throw landed in the catch
+       * below as a load failure, so the player showed "Playback stopped:
+       * the recording could not be loaded" with an rrweb-internal sentence
+       * under it, for a recording that was perfectly fine. That is the
+       * intermittent chromium failure of the session-replay E2E.
+       *
+       * Waiting is the honest answer: nothing has gone wrong, the stage
+       * simply is not on screen yet. The buffer stays "building" (phase
+       * "seeking" / "buffering", which is what a viewer is looking at) and
+       * attach() resumes exactly this build. The loader has the chunks
+       * cached, so the resumed pass does no I/O.
+       */
+      if (!this.isHostConnected()) {
+        this.pendingBuild = {
+          anchorChunkIndex: anchorChunkIndex,
+          targetMs: targetMs,
+        };
         return;
       }
 

@@ -94,6 +94,19 @@ const PREFERRED_PLAN_NAME: string = "Growth";
  * they actually take.
  */
 const MONITOR_STATUS_TIMEOUT_MS: number = 300000;
+
+/*
+ * Recovery gets more room than the outage did.
+ *
+ * The outage is detected on a monitor the probe has just picked up and is
+ * checking on its own schedule. Recovery has an extra hop in front of it:
+ * the monitor's steps are rewritten over the API, and the probe only acts on
+ * that once it has re-read the definition. Under a suite that is driving the
+ * whole stack from one worker, that read is what decides when recovery lands,
+ * not the one-minute check interval - which is why this wait, and only this
+ * wait, kept coming back "timed out waiting for the monitor to recover".
+ */
+const MONITOR_RECOVERY_TIMEOUT_MS: number = 480000;
 const INCIDENT_TIMEOUT_MS: number = 120000;
 const ON_CALL_TIMEOUT_MS: number = 120000;
 const USER_ALERTED_TIMEOUT_MS: number = 120000;
@@ -391,7 +404,12 @@ test.describe("Monitor -> Incident -> On-Call -> User Alerted", () => {
   };
 
   test("website monitor created in the dashboard pages the on-call user when it goes down", async () => {
-    test.setTimeout(900000);
+    /*
+     * Wide enough for every wait below to spend its whole budget and still
+     * report the one that actually ran out, rather than the test being cut
+     * off mid-wait with nothing to say.
+     */
+    test.setTimeout(1500000);
 
     const monitorName: string = `E2E Website ${Faker.generateName().toString()}`;
     const ids: MonitorStepIds = newMonitorStepIds();
@@ -470,7 +488,7 @@ test.describe("Monitor -> Incident -> On-Call -> User Alerted", () => {
       monitorId,
       expectedMonitorStatusId: ctx.defaults.operationalMonitorStatusId,
       description: `monitor "${monitorName}" to recover to operational`,
-      timeoutMs: MONITOR_STATUS_TIMEOUT_MS,
+      timeoutMs: MONITOR_RECOVERY_TIMEOUT_MS,
     });
 
     await waitForIncidentState({

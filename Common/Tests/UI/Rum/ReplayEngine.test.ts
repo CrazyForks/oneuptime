@@ -237,6 +237,11 @@ class FakeReplayer implements ReplayerLike {
 
 interface HarnessOptions {
   entries: Array<SessionReplayChunkManifestEntry>;
+  /*
+   * Skip the attach() a real stage performs, so a test can exercise what
+   * the engine does before its host is on the page.
+   */
+  leaveHostDetached?: boolean;
   eventsPerChunk?: number;
   /* Per-chunk override of the events the "server" returns. */
   eventsForChunk?: (chunkIndex: number) => Array<SessionReplayRecordedEvent>;
@@ -284,6 +289,8 @@ interface Harness {
 }
 
 const harnesses: Array<Harness> = [];
+/* Stage containers appended to the document, removed in afterEach. */
+const containers: Array<HTMLElement> = [];
 
 function makeHarness(options: HarnessOptions): Harness {
   const replayers: Array<FakeReplayer> = [];
@@ -485,6 +492,23 @@ function makeHarness(options: HarnessOptions): Harness {
     },
   };
 
+  /*
+   * Mount the engine's host, the way ReplayStage does.
+   *
+   * rrweb's stage lives in a sandboxed iframe, and creating one throws
+   * unless its root is in a document - so the engine waits for attach()
+   * before building a Replayer. A harness that never attached would model
+   * a player nobody can see, and every build in this file would sit
+   * deferred forever.
+   */
+  if (!options.leaveHostDetached) {
+    const container: HTMLDivElement = document.createElement("div");
+
+    document.body.appendChild(container);
+    containers.push(container);
+    engine.attach(container);
+  }
+
   harnesses.push(harness);
 
   return harness;
@@ -568,9 +592,128 @@ afterEach(() => {
     harness.engine.dispose();
   }
 
+  for (const container of containers) {
+    container.remove();
+  }
+  containers.length = 0;
+
   for (const harness of finished) {
     expect(harness.engine.getDiagnostics().watchdogFireCount).toBe(0);
   }
+});
+
+/*
+ * rrweb's stage is a sandboxed iframe, and creating one throws unless its
+ * root is already in a document. The engine's host div is created in the
+ * constructor and only enters the page when ReplayStage's mount effect calls
+ * attach() - while loading starts as soon as the manifest lands. Whether the
+ * host is on the page by the time the anchor decodes is therefore a race
+ * between the network and React's commit, and on a fast local read the
+ * network wins.
+ *
+ * It lost that race in CI: rrweb threw, the throw landed in build()'s catch
+ * as a load failure, and a perfectly good recording rendered "Playback
+ * stopped - the recording could not be loaded" with an rrweb-internal
+ * sentence under it. Nothing had gone wrong; the stage simply was not on
+ * screen yet.
+ */
+describe("ReplayEngine builds only once its host is on the page", () => {
+  it("waits instead of failing when the stage has not mounted yet", async () => {
+    const harness: Harness = makeHarness({
+      leaveHostDetached: true,
+      entries: [makeEntry(0, { hasFullSnapshot: true }), makeEntry(1)],
+    });
+
+    await loadAndFlush(harness, 0, 0);
+
+    /* No Replayer, and - the point - no error and no halt. */
+    expect(harness.replayers.length).toBe(0);
+    expect(harness.snapshot().error).toBeNull();
+    expect(harness.snapshot().phase).not.toBe("error");
+
+    /*
+     * "Still loading" is the honest word for it, and it is what a viewer
+     * looking at an unmounted stage is actually seeing.
+     */
+    expect(["loading", "seeking", "buffering"]).toContain(
+      harness.snapshot().phase,
+    );
+  });
+
+  it("resumes the same build the moment the stage mounts", async () => {
+    const harness: Harness = makeHarness({
+      leaveHostDetached: true,
+      entries: [makeEntry(0, { hasFullSnapshot: true }), makeEntry(1)],
+    });
+
+    await loadAndFlush(harness, 0, 0);
+
+    expect(harness.replayers.length).toBe(0);
+
+    const container: HTMLDivElement = document.createElement("div");
+
+    document.body.appendChild(container);
+
+    try {
+      harness.engine.attach(container);
+      await flush();
+
+      expect(harness.replayers.length).toBe(1);
+      expect(harness.snapshot().error).toBeNull();
+      expect(harness.snapshot().loadedChunkIndexes).toEqual([0, 1]);
+    } finally {
+      container.remove();
+    }
+  });
+
+  it("does not resume against a container that is not in the document either", async () => {
+    const harness: Harness = makeHarness({
+      leaveHostDetached: true,
+      entries: [makeEntry(0, { hasFullSnapshot: true }), makeEntry(1)],
+    });
+
+    await loadAndFlush(harness, 0, 0);
+
+    /* Attaching to a detached container leaves the host just as detached. */
+    harness.engine.attach(document.createElement("div"));
+    await flush();
+
+    expect(harness.replayers.length).toBe(0);
+    expect(harness.snapshot().error).toBeNull();
+  });
+
+  it("a newer load supersedes the deferred one, so mounting builds the newer anchor", async () => {
+    const harness: Harness = makeHarness({
+      leaveHostDetached: true,
+      entries: [
+        makeEntry(0, { hasFullSnapshot: true }),
+        makeEntry(1),
+        makeEntry(2, { hasFullSnapshot: true }),
+        makeEntry(3),
+      ],
+    });
+
+    await loadAndFlush(harness, 0, 0);
+    await loadAndFlush(harness, 2, 2 * CHUNK_MS);
+
+    expect(harness.replayers.length).toBe(0);
+
+    const container: HTMLDivElement = document.createElement("div");
+
+    document.body.appendChild(container);
+
+    try {
+      harness.engine.attach(container);
+      await flush();
+
+      /* One Replayer, anchored where the SECOND load asked - not the first. */
+      expect(harness.replayers.length).toBe(1);
+      expect(harness.snapshot().loadedChunkIndexes).toEqual([2, 3]);
+      expect(harness.snapshot().error).toBeNull();
+    } finally {
+      container.remove();
+    }
+  });
 });
 
 describe("ReplayEngine chunk feeding", () => {
