@@ -426,14 +426,11 @@ test.describe("Monitor -> Incident -> On-Call -> User Alerted", () => {
        * Every minute, matching the API monitor below.
        *
        * This spec waits for a probe to re-evaluate the monitor twice - once
-       * for the outage and once for the recovery - against a 5 minute
-       * deadline. On the catalog default of "Every 5 Minutes" that deadline is
-       * exactly ONE check wide: a check that lands a second late, or a probe
-       * busy with the rest of the suite, is the difference between green and
-       * "timed out waiting for the monitor to recover to operational" - which
-       * is how this test failed on master while the API monitor beside it,
-       * created with "* * * * *", passed. A one-minute cadence makes the same
-       * deadline four checks wide.
+       * for the outage and once for the recovery. On the catalog default of
+       * "Every 5 Minutes" a five-minute deadline is exactly ONE check wide,
+       * so a check that lands a second late is the difference between green
+       * and "timed out waiting for the monitor to recover". A one-minute
+       * cadence makes the same deadline several checks wide.
        */
       intervalLabel: "Every Minute",
       fillCriteria: async ({ page }: { page: Page }): Promise<void> => {
@@ -449,6 +446,31 @@ test.describe("Monitor -> Incident -> On-Call -> User Alerted", () => {
     });
 
     expect(monitorId, "the created monitor should have an id").not.toBe("");
+
+    /*
+     * One probe's word is enough for this monitor.
+     *
+     * minimumProbeAgreement is not on the create form, and left unset
+     * MonitorResource requires EVERY active probe to agree
+     * (`monitor.minimumProbeAgreement ?? activeProbes.length`). The compose
+     * stack runs two global probes, so this monitor was waiting on the
+     * slower of the two - each of which picks its work up from
+     * /monitor/list once a minute, after a random sleep of up to 45s, from a
+     * queue every other spec in the suite is also filling. That is what took
+     * recovery past eight minutes here while the API monitor below, created
+     * over the API with minimumProbeAgreement: 1, recovered every time.
+     *
+     * Consensus across probes has its own coverage; this spec is about the
+     * alerting pipeline, and it should not be gated on the tail latency of a
+     * second probe.
+     */
+    await requestJson({
+      page: ctx.page,
+      projectId: ctx.projectId,
+      path: `/api/monitor/${monitorId}`,
+      method: "put",
+      body: { data: { minimumProbeAgreement: 1 } },
+    });
 
     const result: AlertingRunResult = await runAlertingFlow({
       monitorId,
