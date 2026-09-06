@@ -27,10 +27,21 @@
       </td>
       <td align="left" style="height:80px; border: 0; margin: 0; padding: 0;">
         <div>
+          {{!--
+            The attribute is QUOTED and the anchor is GUARDED.
+
+            An UNQUOTED href, with homeURL unset, rendered `<a href=>` - a
+            dead link as the first interactive element of every alert,
+            incident, monitor and on-call email, because none of those workers
+            ever set the var. The guard means an email without a homeURL
+            renders the logo as a plain image rather than as a dead link.
+          --}}
+          {{#if homeURL}}
           <a
             style="border: 0; margin: 0; padding: 0; text-decoration: none;"
-            href={{homeURL}}
+            href="{{homeURL}}"
           >
+          {{/if}}
 
             <img
               height="70"
@@ -40,7 +51,9 @@
               style="height:70px; width:70px; border: 0; margin: 0; padding: 0; color: #000000; display: block; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Ubuntu, sans-serif; font-size: 12px; font-weight: normal; border-radius: 10%;"
               src="https://res.cloudinary.com/deityhub/image/upload/v1637736803/1png.png"
             />
+          {{#if homeURL}}
           </a>
+          {{/if}}
         </div>
       </td>
       <td

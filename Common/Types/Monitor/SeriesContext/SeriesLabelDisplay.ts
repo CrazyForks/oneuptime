@@ -120,6 +120,13 @@ const FriendlyLabelNames: Record<string, string> = {
   // --- Services / RUM / telemetry ---
   "service.name": "Service",
   "oneuptime.service.name": "Service",
+  /*
+   * One process/task/replica of a service. What the ServiceAlertTemplates
+   * per-instance metric templates group by, so a "Thread Count Explosion"
+   * alert on a 40-replica service can say which replica. (The two request
+   * latency percentiles are deliberately ungrouped — they are service-level.)
+   */
+  "service.instance.id": "Instance",
   "service.namespace": "Service Namespace",
   "service.version": "Version",
   "deployment.environment": "Environment",
@@ -176,6 +183,11 @@ const LabelPriority: Record<string, number> = {
   device: 35,
   "system.device": 35,
   storage: 35,
+  /*
+   * Above `service.name`: the service is already named by the monitor, the
+   * instance is the part the reader does not know.
+   */
+  "service.instance.id": 22,
   "service.name": 40,
   "oneuptime.service.name": 40,
   "k8s.namespace.name": 50,

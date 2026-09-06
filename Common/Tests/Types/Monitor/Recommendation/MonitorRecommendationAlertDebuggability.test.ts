@@ -105,6 +105,50 @@ describe("Recommendation templates produce debuggable alerts", () => {
     expect(GROUPED_TEMPLATE_CASES.length).toBeGreaterThan(30);
   });
 
+  /*
+   * Every Service metric template thresholds a property of ONE process — a
+   * heap, an event loop, a thread pool. Ungrouped, the ClickHouse aggregation
+   * collapses every replica into a single number: an Avg template on three
+   * JVMs at 95/20/20 reads 45 and stays green while one OOM-kills, and a Max
+   * template fires without being able to name the replica that broke. That
+   * nameless alert is the exact failure this file exists for.
+   *
+   * The two request-latency percentiles are the only legitimate exemptions:
+   * a p95 is the SLO number for the service as a whole, and splitting it per
+   * instance makes it a different alert.
+   */
+  test("service metric templates identify the replica, not just the service", () => {
+    const serviceMetricCases: Array<TemplateCase> = ALL_TEMPLATE_CASES.filter(
+      (testCase: TemplateCase) => {
+        return (
+          testCase.recommendationId.startsWith("Service:") &&
+          testCase.monitorType === MonitorType.Metrics
+        );
+      },
+    );
+
+    expect(serviceMetricCases.length).toBeGreaterThan(20);
+
+    expect(
+      serviceMetricCases
+        .filter((testCase: TemplateCase) => {
+          return testCase.groupByKeys.length === 0;
+        })
+        .map((testCase: TemplateCase) => {
+          return testCase.recommendationId;
+        })
+        .sort(),
+    ).toEqual(["Service:service-latency-p95", "Service:service-latency-p99"]);
+
+    for (const testCase of serviceMetricCases) {
+      if (testCase.groupByKeys.length === 0) {
+        continue;
+      }
+
+      expect(testCase.groupByKeys).toEqual(["resource.service.instance.id"]);
+    }
+  });
+
   describe("every group-by key is a key the alert can name", () => {
     test.each(GROUPED_TEMPLATE_CASES)(
       "$recommendationId",

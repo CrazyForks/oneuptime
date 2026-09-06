@@ -433,4 +433,152 @@ describe("CompareCriteria aggregation semantics", () => {
       ).toEqual([91.53]);
     });
   });
+
+  /*
+   * The unit reaching getCompareMessage is the raw OTel/UCUM code the
+   * exporter declared, not a display label. Two of those codes are not
+   * units a reader should ever see:
+   *
+   *   "1"      UCUM's dimensionless marker for a ratio metric. Appended
+   *            verbatim it produced "is 0.85 1 which is greater than
+   *            0.8 1" — a sentence readers parse as a truncated number or
+   *            a typo, and which claims 1% for a value that is 85%.
+   *            Shipped today by web_vital.cls (thresholdUnit "1"),
+   *            oneuptime.host.heartbeat, and every kubeletstats ratio
+   *            gauge once the native-unit map reaches the infra workers.
+   *
+   *   "{cpu}"  UCUM annotation-only units. The braces are descriptive;
+   *            the value itself is the quantity.
+   *
+   * Everything else must survive untouched — this suppression is exactly
+   * two cases wide, not a general unit filter.
+   */
+  describe("the root cause never prints a unit that is not a unit", () => {
+    function unitMessage(unit: string | undefined): string {
+      return CompareCriteria.getCompareMessage({
+        values: 0.85,
+        threshold: 0.8,
+        criteriaFilter: metricFilter(
+          FilterType.GreaterThan,
+          EvaluateOverTimeType.AnyValue,
+        ),
+        metricDisplayName: "Metric Value",
+        unit: unit,
+      });
+    }
+
+    test("the dimensionless '1' is dropped from the value AND the threshold", () => {
+      const message: string = unitMessage("1");
+
+      expect(message).toBe(
+        "Any value of Metric Value is 0.85 which is greater than 0.8.",
+      );
+      // The two halves of the defect, pinned separately.
+      expect(message).not.toContain("0.85 1");
+      expect(message).not.toContain("0.8 1");
+      // No stray dimensionless token anywhere in the sentence.
+      expect(message).not.toMatch(/\d\s1\b/);
+    });
+
+    test("the CLS sentence a customer received is no longer produced", () => {
+      const message: string = CompareCriteria.getCompareMessage({
+        values: [0.31],
+        threshold: 0.25,
+        criteriaFilter: metricFilter(
+          FilterType.GreaterThanOrEqualTo,
+          EvaluateOverTimeType.Average,
+        ),
+        metricDisplayName: "Cumulative Layout Shift",
+        unit: "1",
+      });
+
+      expect(message).toContain("0.31 which is");
+      expect(message).not.toMatch(/\d\s1\b/);
+    });
+
+    test("annotation-only units are dropped, braces and all", () => {
+      const message: string = unitMessage("{cpu}");
+
+      expect(message).not.toContain("{cpu}");
+      expect(message).not.toContain("{");
+      expect(message).toBe(
+        "Any value of Metric Value is 0.85 which is greater than 0.8.",
+      );
+
+      expect(unitMessage("{packets}")).not.toContain("{packets}");
+      expect(unitMessage("{errors}")).not.toContain("{errors}");
+    });
+
+    test("real units still survive on BOTH the value and the threshold", () => {
+      /*
+       * The guard against over-suppression. If this ever goes quiet the
+       * fix has widened into a general unit filter.
+       */
+      expect(unitMessage("By")).toBe(
+        "Any value of Metric Value is 0.85 By which is greater than 0.8 By.",
+      );
+      expect(unitMessage("%")).toBe(
+        "Any value of Metric Value is 0.85 % which is greater than 0.8 %.",
+      );
+      expect(unitMessage("ms")).toBe(
+        "Any value of Metric Value is 0.85 ms which is greater than 0.8 ms.",
+      );
+      // "1" is suppressed; a unit that merely CONTAINS a 1 is not.
+      expect(unitMessage("m/s2")).toContain("0.85 m/s2");
+      expect(unitMessage("10*3/uL")).toContain("0.85 10*3/uL");
+    });
+
+    test("a stored unit with stray whitespace renders once, trimmed", () => {
+      const message: string = unitMessage(" ms ");
+
+      expect(message).toBe(
+        "Any value of Metric Value is 0.85 ms which is greater than 0.8 ms.",
+      );
+      expect(message).not.toContain("  ");
+    });
+
+    test("a whitespace-only unit is treated as no unit at all", () => {
+      expect(unitMessage("   ")).toBe(
+        "Any value of Metric Value is 0.85 which is greater than 0.8.",
+      );
+      expect(unitMessage(undefined)).toBe(
+        "Any value of Metric Value is 0.85 which is greater than 0.8.",
+      );
+      // A padded "1" is still the dimensionless marker.
+      expect(unitMessage(" 1 ")).not.toMatch(/\d\s1\b/);
+    });
+
+    test("every comparator branch takes the same suffix", () => {
+      /*
+       * The suffix is appended in seven places — once on the observed
+       * values and once per comparator. A partial fix would leave the
+       * threshold half carrying "1" while the value half dropped it.
+       */
+      const comparators: Array<FilterType> = [
+        FilterType.GreaterThan,
+        FilterType.GreaterThanOrEqualTo,
+        FilterType.LessThan,
+        FilterType.LessThanOrEqualTo,
+        FilterType.EqualTo,
+        FilterType.NotEqualTo,
+      ];
+
+      for (const filterType of comparators) {
+        const message: string = CompareCriteria.getCompareMessage({
+          values: 0.85,
+          threshold: 0.8,
+          criteriaFilter: metricFilter(
+            filterType,
+            EvaluateOverTimeType.AnyValue,
+          ),
+          metricDisplayName: "Metric Value",
+          unit: "1",
+        });
+
+        expect(message).not.toMatch(/\d\s1\b/);
+        expect(message).toContain("0.85");
+        expect(message).toContain("0.8.");
+      }
+    });
+  });
 });

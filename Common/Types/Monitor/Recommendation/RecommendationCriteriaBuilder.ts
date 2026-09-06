@@ -88,7 +88,27 @@ export function getRecoveryThreshold(data: {
   filterType: FilterType;
   value: number;
   marginFraction?: number | undefined;
+  isBinaryMetric?: boolean | undefined;
 }): number | undefined {
+  /*
+   * A 0/1 metric has no room for a dead band.
+   *
+   * The `value === 0` carve-out below cannot catch these, because a boolean
+   * signal is conventionally written as a threshold of ONE — "up < 1" fires,
+   * "up >= 1" recovers. Widening that by 10% puts recovery at `>= 1.1`, which
+   * a metric that only ever emits 0 or 1 can never satisfy: the healthy
+   * criteria never matches, the monitor falls through to the "no criteria
+   * met" branch, and a device that comes back up never produces an Online
+   * transition.
+   *
+   * This is a regression the dead band introduced. It affected
+   * `iot-device-offline`, `pve-node-offline` and `pve-guest-down`, all of
+   * which threshold a strictly binary gauge at 1.
+   */
+  if (data.isBinaryMetric) {
+    return undefined;
+  }
+
   if (data.value === 0 || !Number.isFinite(data.value)) {
     return undefined;
   }
@@ -280,6 +300,11 @@ export interface HealthyCriteriaArgs {
    */
   recoveryValue?: number | undefined;
   marginFraction?: number | undefined;
+  /*
+   * Set for a strictly 0/1 gauge (device up, node online, guest running).
+   * Suppresses the dead band, which such a metric can never cross.
+   */
+  isBinaryMetric?: boolean | undefined;
   metricAggregationType?: EvaluateOverTimeType | undefined;
   additionalFilters?: Array<AdditionalCriteriaFilterSpec> | undefined;
   filterCondition?: FilterCondition | undefined;
@@ -309,6 +334,7 @@ export function buildHealthyCriteriaInstance(
       filterType: firingFilterType,
       value: args.value,
       marginFraction: args.marginFraction,
+      isBinaryMetric: args.isBinaryMetric,
     }) ??
     args.value;
 
@@ -339,6 +365,7 @@ export function buildHealthyCriteriaInstance(
             filterType: getRecoveryFilterType(spec.filterType),
             value: spec.value,
             marginFraction: args.marginFraction,
+            isBinaryMetric: args.isBinaryMetric,
           }) ?? spec.value
         );
       },

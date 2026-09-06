@@ -87,6 +87,14 @@ const EXPECTED_DOCKER_GROUP_BY: Array<GroupByExpectation> = [
   },
 ];
 
+/*
+ * `podman-cpu-throttling` was REMOVED from the catalog, not from this list by
+ * oversight. It thresholded `container.cpu.throttling.throttled_time` — a
+ * LIFETIME cumulative counter — at `> 0`, so any container that had ever been
+ * throttled since it started pinned the monitor unhealthy forever, and the
+ * healthy criteria could never match. Nothing in the ingest or criteria path
+ * deltas a counter, so there was no threshold that would have made it work.
+ */
 const EXPECTED_PODMAN_GROUP_BY: Array<GroupByExpectation> = [
   { id: "podman-high-cpu", groupByAttributeKeys: [CONTAINER_NAME_ATTRIBUTE] },
   {
@@ -95,10 +103,6 @@ const EXPECTED_PODMAN_GROUP_BY: Array<GroupByExpectation> = [
   },
   {
     id: "podman-restart-loop",
-    groupByAttributeKeys: [CONTAINER_NAME_ATTRIBUTE],
-  },
-  {
-    id: "podman-cpu-throttling",
     groupByAttributeKeys: [CONTAINER_NAME_ATTRIBUTE],
   },
   { id: "podman-high-pids", groupByAttributeKeys: [CONTAINER_NAME_ATTRIBUTE] },

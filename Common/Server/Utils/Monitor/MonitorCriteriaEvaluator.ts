@@ -53,7 +53,11 @@ import DatabaseMonitorResponse, {
   DatabaseMetricGroupStatus,
 } from "../../../Types/Monitor/DatabaseMonitor/DatabaseMonitorResponse";
 import MonitorType from "../../../Types/Monitor/MonitorType";
-import { CheckOn, CriteriaFilter } from "../../../Types/Monitor/CriteriaFilter";
+import {
+  CheckOn,
+  CriteriaFilter,
+  FilterType,
+} from "../../../Types/Monitor/CriteriaFilter";
 import OneUptimeDate from "../../../Types/Date";
 import { JSONObject } from "../../../Types/JSON";
 import Dictionary from "../../../Types/Dictionary";
@@ -2677,10 +2681,73 @@ ${contextBlock}
     return sections.length > 0 ? sections.join("\n") : null;
   }
 
+  /*
+   * Which rows of the Ceph affected-resources table actually BREACHED.
+   *
+   * The blanket `metricValue > 0` below is right for every count- or
+   * level-style criteria ("> 0 active health checks", "> 85 % used"), but
+   * it is exactly backwards for the availability signals: the OSD Down /
+   * OSD Out / Quorum Degraded criteria fire on `< 1` over ceph_osd_up /
+   * ceph_osd_in / ceph_mon_quorum_status, so the ZERO rows are the down
+   * daemons. Dropping them rendered a table of the HEALTHY daemons under
+   * an incident that tells the reader to "check the root cause for the
+   * affected ceph_daemon label".
+   *
+   * Invert only for a criteria that fires when the metric FALLS.
+   * Everything else — every `> 0` health check, PG count, latency and
+   * capacity ratio, and every `= 0` recovery criteria — keeps the
+   * existing `> 0`, worst-highest-first table byte for byte.
+   */
+  private static getCephBreachPredicate(
+    criteriaInstance?: MonitorCriteriaInstance | undefined,
+  ): { matches: (value: number) => boolean; worstIsLowest: boolean } {
+    const metricFilters: Array<CriteriaFilter> = (
+      criteriaInstance?.data?.filters || []
+    ).filter((f: CriteriaFilter) => {
+      return f.checkOn === CheckOn.MetricValue && typeof f.value === "number";
+    });
+
+    const firesWhenMetricFalls: boolean =
+      metricFilters.length > 0 &&
+      metricFilters.every((f: CriteriaFilter) => {
+        return (
+          f.filterType === FilterType.LessThan ||
+          f.filterType === FilterType.LessThanOrEqualTo
+        );
+      });
+
+    if (!firesWhenMetricFalls) {
+      return {
+        matches: (value: number): boolean => {
+          return value > 0;
+        },
+        worstIsLowest: false,
+      };
+    }
+
+    return {
+      matches: (value: number): boolean => {
+        return metricFilters.some((f: CriteriaFilter) => {
+          const threshold: number = f.value as number;
+
+          return f.filterType === FilterType.LessThan
+            ? value < threshold
+            : value <= threshold;
+        });
+      },
+      /*
+       * A criteria that fires when the metric falls ranks the smallest
+       * value worst, so "worst first" is ascending here.
+       */
+      worstIsLowest: true,
+    };
+  }
+
   private static buildCephRootCauseContext(input: {
     dataToProcess: DataToProcess;
     monitorStep: MonitorStep;
     monitor: Monitor;
+    criteriaInstance?: MonitorCriteriaInstance | undefined;
   }): string | null {
     const metricResponse: MetricMonitorResponse =
       input.dataToProcess as MetricMonitorResponse;
@@ -2736,21 +2803,28 @@ ${contextBlock}
 
     if (breakdown && breakdown.affectedResources.length > 0) {
       /*
-       * K8s-parity render: drop zero-value rows, worst (highest)
-       * first, top 10. Note that for availability metrics
-       * (ceph_osd_up / ceph_osd_in / ceph_mon_quorum_status)
-       * zero-valued rows ARE the down resources — those still drive
-       * alerting through the per-series criteria evaluation; this
-       * table is supplementary context only.
+       * Keep the rows that satisfy the criteria that just matched, worst
+       * first, top 10 — NOT simply the non-zero rows. For ceph_osd_up /
+       * ceph_osd_in / ceph_mon_quorum_status the criteria is `< 1`, so
+       * the zero rows are the whole point of the incident.
        */
+      const breach: {
+        matches: (value: number) => boolean;
+        worstIsLowest: boolean;
+      } = MonitorCriteriaEvaluator.getCephBreachPredicate(
+        input.criteriaInstance,
+      );
+
       const sortedResources: Array<CephAffectedResource> = [
         ...breakdown.affectedResources,
       ]
         .filter((r: CephAffectedResource) => {
-          return r.metricValue > 0;
+          return breach.matches(r.metricValue);
         })
         .sort((a: CephAffectedResource, b: CephAffectedResource) => {
-          return b.metricValue - a.metricValue;
+          return breach.worstIsLowest
+            ? a.metricValue - b.metricValue
+            : b.metricValue - a.metricValue;
         });
 
       /*
@@ -2858,10 +2932,17 @@ ${contextBlock}
       lines.push(
         `Recommended actions: Check container logs with \`kubectl logs ${topResource.podName || "<pod-name>"} -c ${topResource.containerName || "<container>"} --previous\` and inspect events with \`kubectl describe pod ${topResource.podName || "<pod-name>"}\`.`,
       );
-    } else if (
-      metricName === "k8s.pod.phase" &&
-      breakdown.attributes["k8s.pod.phase"] === "Pending"
-    ) {
+    } else if (metricName === "k8s.pod.phase") {
+      /*
+       * The second half of this condition used to be
+       * `breakdown.attributes["k8s.pod.phase"] === "Pending"`, which could
+       * never be true. `breakdown.attributes` is the QUERY's attribute map
+       * (MonitorTelemetryMonitor stamps `resource.`-prefixed keys into it),
+       * and no receiver or processor in the shipped agent emits a pod
+       * phase attribute at all — the phase is the metric's VALUE
+       * (1 = Pending ... 5 = Unknown). So this branch never ran and every
+       * pod-phase alert fell through to the generic Kubernetes text.
+       */
       lines.push(`Pods are stuck in Pending phase and unable to be scheduled.`);
       lines.push(
         `Common causes: insufficient CPU/memory resources on nodes, node affinity/taint restrictions preventing scheduling, PersistentVolumeClaim pending, or resource quota exceeded.`,
@@ -2889,7 +2970,18 @@ ${contextBlock}
       );
     } else if (
       metricName === "k8s.node.cpu.utilization" ||
-      (metricName.includes("cpu") && metricName.includes("utilization"))
+      /*
+       * Node-scoped ONLY. The bare substring test used to swallow every
+       * pod- and container-scoped CPU metric — `k8s.pod.cpu.utilization`,
+       * and now `k8s.pod.cpu_limit_utilization` — and answer them with
+       * "Node X is at N% CPU utilization... consider scaling the cluster",
+       * directly contradicting the pod-limit template's own description,
+       * which tells the reader NOT to add replicas, and naming a node for
+       * a pod-scoped alert.
+       */
+      (metricName.startsWith("k8s.node.") &&
+        metricName.includes("cpu") &&
+        metricName.includes("utilization"))
     ) {
       lines.push(`Node CPU utilization has exceeded the configured threshold.`);
       if (topResource.nodeName) {
@@ -2905,7 +2997,10 @@ ${contextBlock}
       );
     } else if (
       metricName === "k8s.node.memory.usage" ||
-      (metricName.includes("memory") && metricName.includes("usage"))
+      // Node-scoped only — see the CPU branch above.
+      (metricName.startsWith("k8s.node.") &&
+        metricName.includes("memory") &&
+        metricName.includes("usage"))
     ) {
       lines.push(
         `Node memory utilization has exceeded the configured threshold.`,
