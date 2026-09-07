@@ -484,6 +484,46 @@ describe("JSONFunctions Class", () => {
       }).toThrow("Expected JSONObject, but got JSONArray");
     });
 
+    /*
+     * An array was once the only shape refused, so every other non-object -
+     * all of them valid JSON - came back typed as a JSONObject and was read
+     * as one. The two callers that matter both did exactly that: the Text to
+     * JSON workflow component announced a bare number as a successful parse,
+     * and JSONWebToken.decodeJsonPayload took a string payload and read
+     * undefined out of every field of it.
+     */
+    test("parseJSONObject throws when given a bare number", () => {
+      expect(() => {
+        return JSONFunctions.parseJSONObject("42");
+      }).toThrow("Expected JSONObject, but got number");
+    });
+
+    test("parseJSONObject throws when given a bare string", () => {
+      expect(() => {
+        return JSONFunctions.parseJSONObject('"just a string"');
+      }).toThrow("Expected JSONObject, but got string");
+    });
+
+    test("parseJSONObject throws when given a bare boolean", () => {
+      expect(() => {
+        return JSONFunctions.parseJSONObject("true");
+      }).toThrow("Expected JSONObject, but got boolean");
+    });
+
+    test("parseJSONObject throws when given null", () => {
+      expect(() => {
+        return JSONFunctions.parseJSONObject("null");
+      }).toThrow("Expected JSONObject, but got null");
+    });
+
+    test("parseJSONObject still accepts an empty object", () => {
+      expect(JSONFunctions.parseJSONObject("{}")).toEqual({});
+    });
+
+    test("parseJSONObject still accepts JSON5 unquoted keys", () => {
+      expect(JSONFunctions.parseJSONObject("{ a: 1 }")).toEqual({ a: 1 });
+    });
+
     test("parseJSONArray returns an array", () => {
       expect(JSONFunctions.parseJSONArray("[1, 2]")).toEqual([1, 2]);
     });

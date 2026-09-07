@@ -548,11 +548,27 @@ export default class JSONFunctions {
     return JSON5.parse(val);
   }
 
+  /*
+   * Guarding only against an array leaves every OTHER non-object through:
+   * `42`, `"text"`, `true` and `null` are all valid JSON that JSON5.parse
+   * returns happily, and none of them is an array, so each used to be handed
+   * back typed as a JSONObject. Nothing downstream re-checks - the Text to
+   * JSON workflow component reported a bare number as a SUCCESSFUL parse and
+   * put it on its `json` port, and JSONWebToken.decodeJsonPayload read
+   * properties off a string payload and got undefined for every one of them.
+   * A parse that cannot produce an object should say so where it happens.
+   */
   public static parseJSONObject(val: string): JSONObject {
     const result: JSONObject | JSONArray = this.parse(val);
 
     if (Array.isArray(result)) {
       throw new Error("Expected JSONObject, but got JSONArray");
+    }
+
+    if (result === null || typeof result !== "object") {
+      throw new Error(
+        `Expected JSONObject, but got ${result === null ? "null" : typeof result}`,
+      );
     }
 
     return result;
